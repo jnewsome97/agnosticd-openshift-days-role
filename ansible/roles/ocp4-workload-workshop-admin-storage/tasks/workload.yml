@@ -10,19 +10,19 @@
     dest: /tmp/workshop-settings.sh
 
 # Wait for Showroom to be deployed (by ocp4_workload_showroom)
+# Using namespace-based lookup instead of label selectors (more reliable)
+- name: Set Showroom namespace
+  set_fact:
+    showroom_namespace: "showroom-{{ guid }}"
+
 - name: Wait for Showroom deployment to exist
   kubernetes.core.k8s_info:
     kind: Deployment
-    label_selectors:
-      - app=showroom
+    namespace: "{{ showroom_namespace }}"
   register: showroom_deployment_r
   until: showroom_deployment_r.resources | length > 0
   retries: 10
   delay: 10
-
-- name: Get Showroom namespace
-  set_fact:
-    showroom_namespace: "{{ showroom_deployment_r.resources[0].metadata.namespace }}"
 
 - name: Create ConfigMap with workshop environment variables
   kubernetes.core.k8s:
