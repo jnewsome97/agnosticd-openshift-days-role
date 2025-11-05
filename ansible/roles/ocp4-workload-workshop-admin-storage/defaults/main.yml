@@ -2,7 +2,9 @@
 become_override: false
 ocp_username: kubeadmin
 silent: false
-WORKSHOP_FILE: workshop.yaml
 
 _infra_node_replicas: 3
 _infra_node_instance_type: m5a.4xlarge
+
+# Note: This role now works with Showroom instead of Homeroom
+# It gathers cluster metadata and grants cluster-admin permissions
