@@ -43,6 +43,51 @@
       data:
         workshop-settings.sh: "{{ workshop_settings_content.content | b64decode }}"
 
+- name: Parse workshop settings into individual variables for ConfigMap
+  set_fact:
+    workshop_vars: "{{ workshop_settings_content.content | b64decode | regex_findall('([A-Z_]+)=(.*)') | items2dict }}"
+
+- name: Create ConfigMap with individual environment variables
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: workshop-vars
+        namespace: "{{ showroom_namespace }}"
+        labels:
+          app: showroom
+      data: "{{ workshop_vars }}"
+
+- name: Patch Showroom deployment to inject workshop environment variables
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+            - name: showroom
+              envFrom:
+              - configMapRef:
+                  name: workshop-vars
+
+- name: Wait for Showroom deployment to roll out with new environment variables
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_deployment_patched
+  until:
+    - showroom_deployment_patched.resources[0].status.updatedReplicas is defined
+    - showroom_deployment_patched.resources[0].status.updatedReplicas == showroom_deployment_patched.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+
 - name: Grant cluster-admin to Showroom serviceaccount
   kubernetes.core.k8s:
     state: present
