@@ -45,7 +45,12 @@
 
 - name: Parse workshop settings into individual variables for ConfigMap
   set_fact:
-    workshop_vars: "{{ workshop_settings_content.content | b64decode | regex_findall('([A-Z_]+)=(.*)') | dict }}"
+    workshop_vars: >-
+      {%- set result = {} -%}
+      {%- for key, value in workshop_settings_content.content | b64decode | regex_findall('([A-Z_]+)=(.*)') -%}
+      {%- set _ = result.update({key: value}) -%}
+      {%- endfor -%}
+      {{ result }}
 
 - name: Create ConfigMap with individual environment variables
   kubernetes.core.k8s:
