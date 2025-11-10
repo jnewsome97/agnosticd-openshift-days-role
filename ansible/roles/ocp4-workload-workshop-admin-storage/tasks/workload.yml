@@ -78,6 +78,17 @@
             }
           }
         ]
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/envFrom",
+        "value": [
+          {
+            "configMapRef": {
+              "name": "workshop-vars"
+            }
+          }
+        ]
       }
     ]'
   register: patch_result
