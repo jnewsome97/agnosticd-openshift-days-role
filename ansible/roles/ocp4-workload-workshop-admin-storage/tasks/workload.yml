@@ -136,8 +136,15 @@
   until:
     - showroom_deployment_after_mount.resources[0].status.updatedReplicas is defined
     - showroom_deployment_after_mount.resources[0].status.updatedReplicas == showroom_deployment_after_mount.resources[0].spec.replicas
+    - showroom_deployment_after_mount.resources[0].status.readyReplicas is defined
+    - showroom_deployment_after_mount.resources[0].status.readyReplicas == showroom_deployment_after_mount.resources[0].spec.replicas
   retries: 30
   delay: 10
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom pod to be fully ready
+  shell: |
+    oc wait --for=condition=ready pod -l app=showroom -n {{ showroom_namespace }} --timeout=300s
   when: enable_workshop_cli_tools | default(true) | bool
 
 - name: Create bashrc.d directory in terminal container
