@@ -106,6 +106,68 @@
   retries: 30
   delay: 10
 
+# ==============================================================================
+# Auto-install CLI tools via .workshop/setup script
+# To disable: set enable_workshop_cli_tools: false in your vars
+# ==============================================================================
+- name: Patch terminal container to mount workshop content for CLI tool installation
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type=json -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/2/volumeMounts/-",
+        "value": {
+          "name": "showroom",
+          "mountPath": "/showroom",
+          "readOnly": true
+        }
+      }
+    ]'
+  register: terminal_mount_result
+  failed_when: terminal_mount_result.rc != 0 and 'already exists' not in terminal_mount_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom deployment to roll out after mounting workshop content
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_deployment_after_mount
+  until:
+    - showroom_deployment_after_mount.resources[0].status.updatedReplicas is defined
+    - showroom_deployment_after_mount.resources[0].status.updatedReplicas == showroom_deployment_after_mount.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Create bashrc.d directory in terminal container
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- mkdir -p /home/lab-user/.bashrc.d
+  register: bashrc_dir_result
+  failed_when: bashrc_dir_result.rc != 0 and 'File exists' not in bashrc_dir_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Add workshop setup auto-run script to terminal
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- bash -c 'cat > /home/lab-user/.bashrc.d/00-workshop-setup.sh << "EOF"
+    #!/bin/bash
+    # Auto-run .workshop/setup script on first terminal login
+    if [ -x /showroom/repo/.workshop/setup ] && [ ! -f ~/.workshop-setup-complete ]; then
+      echo "Running workshop CLI tools setup..."
+      /showroom/repo/.workshop/setup
+      touch ~/.workshop-setup-complete
+    fi
+    EOF'
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Make workshop setup script executable
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- chmod +x /home/lab-user/.bashrc.d/00-workshop-setup.sh
+  when: enable_workshop_cli_tools | default(true) | bool
+# ==============================================================================
+# End CLI tools auto-install section
+# ==============================================================================
+
 - name: Grant cluster-admin to Showroom serviceaccount
   kubernetes.core.k8s:
     state: present
