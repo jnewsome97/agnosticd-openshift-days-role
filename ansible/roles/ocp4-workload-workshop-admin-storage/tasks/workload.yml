@@ -144,7 +144,8 @@
 
 - name: Wait for Showroom pod to be fully ready
   shell: |
-    oc wait --for=condition=ready pod -l app=showroom -n {{ showroom_namespace }} --timeout=300s
+    POD_NAME=$(oc get pods -n {{ showroom_namespace }} -o jsonpath='{.items[0].metadata.name}')
+    oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
   when: enable_workshop_cli_tools | default(true) | bool
 
 - name: Create bashrc.d directory in terminal container
