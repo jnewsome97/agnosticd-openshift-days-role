@@ -148,6 +148,23 @@
     oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
   when: enable_workshop_cli_tools | default(true) | bool
 
+- name: Inject workshop environment variables into antora.yml
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    if [ -x /opt/app-root/src/.workshop/inject-env-vars.sh ]; then
+      /opt/app-root/src/.workshop/inject-env-vars.sh
+    fi'
+  register: inject_vars_result
+  failed_when: false
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Trigger Showroom content rebuild after variable injection
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- touch /opt/app-root/src/.rebuild
+  register: rebuild_trigger
+  failed_when: false
+  when: enable_workshop_cli_tools | default(true) | bool
+
 - name: Create bashrc.d directory in terminal container
   shell: |
     oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- mkdir -p /home/lab-user/.bashrc.d
