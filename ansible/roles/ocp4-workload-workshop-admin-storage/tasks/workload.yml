@@ -148,21 +148,124 @@
     oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
   when: enable_workshop_cli_tools | default(true) | bool
 
+- name: Add Antora cache volume to Showroom deployment
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type='json' -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/volumes/-",
+        "value": {
+          "name": "antora-cache",
+          "emptyDir": {}
+        }
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/volumeMounts/-",
+        "value": {
+          "name": "antora-cache",
+          "mountPath": "/opt/app-root/src/.cache"
+        }
+      }
+    ]'
+  register: antora_cache_result
+  failed_when: antora_cache_result.rc != 0 and 'already exists' not in antora_cache_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Add npm cache volume to Showroom deployment
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type='json' -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/volumes/-",
+        "value": {
+          "name": "npm-cache",
+          "emptyDir": {}
+        }
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/volumeMounts/-",
+        "value": {
+          "name": "npm-cache",
+          "mountPath": "/opt/app-root/src/.npm"
+        }
+      }
+    ]'
+  register: npm_cache_result
+  failed_when: npm_cache_result.rc != 0 and 'already exists' not in npm_cache_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom to roll out after cache volumes added
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_after_cache
+  until:
+    - showroom_after_cache.resources[0].status.updatedReplicas is defined
+    - showroom_after_cache.resources[0].status.updatedReplicas == showroom_after_cache.resources[0].spec.replicas
+    - showroom_after_cache.resources[0].status.readyReplicas is defined
+    - showroom_after_cache.resources[0].status.readyReplicas == showroom_after_cache.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for new pod to be ready after cache volumes
+  shell: |
+    sleep 10
+    POD_NAME=$(oc get pods -n {{ showroom_namespace }} -o jsonpath='{.items[0].metadata.name}')
+    oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
+  when: enable_workshop_cli_tools | default(true) | bool
+
 - name: Inject workshop environment variables into antora.yml
   shell: |
     oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
     if [ -x /showroom/repo/.workshop/inject-env-vars.sh ]; then
       /showroom/repo/.workshop/inject-env-vars.sh
+    else
+      echo "ERROR: injection script not found or not executable"
+      exit 1
     fi'
   register: inject_vars_result
-  failed_when: false
   when: enable_workshop_cli_tools | default(true) | bool
 
-- name: Trigger Showroom content rebuild after variable injection
+- name: Display variable injection output
+  debug:
+    msg: "{{ inject_vars_result.stdout_lines }}"
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Rebuild Antora site with injected variables
   shell: |
-    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- touch /opt/app-root/src/.rebuild
-  register: rebuild_trigger
-  failed_when: false
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    cd /showroom/repo && npx antora default-site.yml'
+  register: antora_build_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Display Antora build output
+  debug:
+    msg: "{{ antora_build_result.stdout_lines | default([]) }}"
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Copy built site to served location
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    cp -r /showroom/repo/public/* /showroom/www/'
+  register: copy_site_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Verify workshop variables are rendered
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    echo "=== Variable Rendering Verification ==="
+    echo "Environment: $(grep -c "Amazon Web Services" /showroom/www/ocp-admin-storage/main/index.html || echo 0) occurrences"
+    echo "SSH Username: $(grep -c "ssh -l.*bastion\." /showroom/www/ocp-admin-storage/main/installation.html || echo 0) occurrences"'
+  register: verify_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Display verification results
+  debug:
+    msg: "{{ verify_result.stdout_lines }}"
   when: enable_workshop_cli_tools | default(true) | bool
 
 - name: Create bashrc.d directory in terminal container
