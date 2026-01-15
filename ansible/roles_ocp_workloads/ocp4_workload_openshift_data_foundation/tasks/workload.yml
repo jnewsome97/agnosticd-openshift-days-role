@@ -92,7 +92,7 @@
 
 - name: Wait for the console plugin to become available
   kubernetes.core.k8s_info:
-    api_version: console.openshift.io/v1alpha1
+    api_version: console.openshift.io/v1
     kind: ConsolePlugin
     name: odf-console
   register: r_console_plugin
@@ -116,28 +116,10 @@
     state: present
     definition: "{{ lookup('template', 'storagecluster.yaml.j2') | from_yaml }}"
 
-- name: Create the ODF StorageSystem
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ lookup('template', 'storagesystem.yaml.j2') | from_yaml }}"
-  register: r_k8s_run
-  until: r_k8s_run is not failed
-  delay: 10
-  retries: 3
-
-- name: Wait for ODF Storage System to finish deploying
-  kubernetes.core.k8s_info:
-    api_version: odf.openshift.io/v1alpha1
-    kind: StorageSystem
-    name: ocs-storagecluster-storagesystem
-    namespace: openshift-storage
-    wait: true
-    wait_condition:
-      reason: ReconcileCompleted
-      status: 'True'
-      type: Available
-    wait_sleep: 10
-    wait_timeout: "{{ ocp4_workload_openshift_data_foundation_ceph_storage_system_deploy_timeout }}"
+# Removed StorageSystem creation and wait tasks - StorageSystem CRD deprecated in ODF 4.20+
+# The StorageSystem abstraction layer was removed to simplify ODF architecture
+# StorageCluster now directly manages all Ceph resources without intermediate abstraction
+# The StorageCluster wait below is sufficient to confirm full ODF deployment
 
 - name: Wait for ODF Storage Cluster to finish deploying
   kubernetes.core.k8s_info:
