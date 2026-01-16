@@ -69,19 +69,35 @@
         sourceNamespace: openshift-marketplace
   when: workshop_deploy_lvms | default(false) | bool
 
-- name: Wait for LVMS operator to be ready
+- name: Wait for LVMS Subscription to have installedCSV
   kubernetes.core.k8s_info:
-    api_version: apps/v1
-    kind: Deployment
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: lvms-operator
     namespace: "{{ workshop_lvms_namespace }}"
-    label_selectors:
-      - "app.kubernetes.io/name=lvms-operator"
-  register: lvms_operator_deployment
+  register: lvms_subscription
   until:
-    - lvms_operator_deployment.resources | length > 0
-    - lvms_operator_deployment.resources[0].status.readyReplicas is defined
-    - lvms_operator_deployment.resources[0].status.readyReplicas >= 1
-  retries: 30
+    - lvms_subscription.resources | length > 0
+    - lvms_subscription.resources[0].status is defined
+    - lvms_subscription.resources[0].status.installedCSV is defined
+    - lvms_subscription.resources[0].status.installedCSV | length > 0
+  retries: 60
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMS CSV to be Succeeded
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ lvms_subscription.resources[0].status.installedCSV }}"
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: lvms_csv
+  until:
+    - lvms_csv.resources | length > 0
+    - lvms_csv.resources[0].status is defined
+    - lvms_csv.resources[0].status.phase is defined
+    - lvms_csv.resources[0].status.phase == "Succeeded"
+  retries: 60
   delay: 10
   when: workshop_deploy_lvms | default(false) | bool
 
