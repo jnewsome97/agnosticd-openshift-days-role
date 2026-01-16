@@ -4,6 +4,133 @@
 # Showroom Cluster Admin Setup (adapted from Homeroom version)
 # Keeps all cluster metadata gathering, swaps deployment for Showroom
 
+# ==============================================================================
+# LVMS Deployment Section (optional - enabled via workshop_deploy_lvms: true)
+# Deploys LVMS operator with optionalPaths for AWS NVMe device handling
+# ==============================================================================
+
+- name: Create openshift-storage namespace for LVMS
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ workshop_lvms_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create CatalogSource for LVMS (snapshot)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: CatalogSource
+      metadata:
+        name: "{{ workshop_lvms_catalogsource_name }}"
+        namespace: openshift-marketplace
+      spec:
+        sourceType: grpc
+        image: "{{ workshop_lvms_catalog_snapshot_image }}:{{ workshop_lvms_catalog_snapshot_image_tag }}"
+        displayName: LVMS Catalog Snapshot
+  when:
+    - workshop_deploy_lvms | default(false) | bool
+    - workshop_lvms_use_catalog_snapshot | default(false) | bool
+
+- name: Create OperatorGroup for LVMS
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: lvms-operatorgroup
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        targetNamespaces:
+          - "{{ workshop_lvms_namespace }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create LVMS Subscription
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: lvms-operator
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        channel: "{{ workshop_lvms_channel }}"
+        installPlanApproval: Automatic
+        name: lvms-operator
+        source: "{{ workshop_lvms_use_catalog_snapshot | default(false) | ternary(workshop_lvms_catalogsource_name, 'redhat-operators') }}"
+        sourceNamespace: openshift-marketplace
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMS operator to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ workshop_lvms_namespace }}"
+    label_selectors:
+      - "app.kubernetes.io/name=lvms-operator"
+  register: lvms_operator_deployment
+  until:
+    - lvms_operator_deployment.resources | length > 0
+    - lvms_operator_deployment.resources[0].status.readyReplicas is defined
+    - lvms_operator_deployment.resources[0].status.readyReplicas >= 1
+  retries: 30
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create LVMCluster with optionalPaths
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: lvm.topolvm.io/v1alpha1
+      kind: LVMCluster
+      metadata:
+        name: lvmcluster
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        storage:
+          deviceClasses:
+            - name: "{{ workshop_lvms_vg_name }}"
+              default: true
+              deviceSelector: "{{ lookup('template', 'lvms_device_selector.j2') | from_yaml }}"
+              thinPoolConfig:
+                name: thin-pool-1
+                sizePercent: 90
+                overprovisionRatio: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMCluster to be ready
+  kubernetes.core.k8s_info:
+    api_version: lvm.topolvm.io/v1alpha1
+    kind: LVMCluster
+    name: lvmcluster
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: lvmcluster_status
+  until:
+    - lvmcluster_status.resources | length > 0
+    - lvmcluster_status.resources[0].status is defined
+    - lvmcluster_status.resources[0].status.state is defined
+    - lvmcluster_status.resources[0].status.state == "Ready"
+  retries: 60
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display LVMS deployment status
+  debug:
+    msg: "LVMS deployed successfully with LVMCluster in Ready state"
+  when: workshop_deploy_lvms | default(false) | bool
+
+# ==============================================================================
+# End LVMS Deployment Section
+# ==============================================================================
+
 - name: create the variable template file
   template:
     src: files/workshop-settings.j2
