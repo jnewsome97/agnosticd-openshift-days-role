@@ -38,10 +38,5 @@ workshop_lvms_optional_paths:
   - /dev/nvme3n1
   - /dev/nvme4n1
 
-# Size-based filtering (optional) - use to target specific device sizes
-# Useful when ODF uses large volumes and you want LVMS on smaller dedicated volumes
-# workshop_lvms_min_size: 400Gi
-# workshop_lvms_max_size: 600Gi
-
 # Force wipe - required when using optionalPaths to handle pre-existing signatures
 workshop_lvms_force_wipe: true
