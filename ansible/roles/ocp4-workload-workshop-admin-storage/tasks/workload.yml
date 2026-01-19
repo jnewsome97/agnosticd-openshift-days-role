@@ -210,6 +210,188 @@
   debug:
     msg: "{{ debug_pvcs.stdout_lines }}"
 
+- name: DEBUG - All Subscriptions (detect conflicts)
+  shell: |
+    echo "=== ALL SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,PACKAGE:.spec.name,CHANNEL:.spec.channel,SOURCE:.spec.source,STATE:.status.state 2>/dev/null || echo "No subscriptions found"
+    echo ""
+    echo "=== SUBSCRIPTIONS WITH ISSUES ==="
+    oc get subscriptions.operators.coreos.com -A -o json 2>/dev/null | jq -r '.items[] | select(.status.conditions[]? | select(.type=="ResolutionFailed" and .status=="True")) | "\(.metadata.namespace)/\(.metadata.name): \(.status.conditions[] | select(.type=="ResolutionFailed") | .message)"' 2>/dev/null | head -10 || echo "No subscription issues found"
+  register: debug_subscriptions
+
+- name: Display subscriptions
+  debug:
+    msg: "{{ debug_subscriptions.stdout_lines }}"
+
+- name: DEBUG - All CatalogSources
+  shell: |
+    echo "=== CATALOG SOURCES ==="
+    oc get catalogsource -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TYPE:.spec.sourceType,STATUS:.status.connectionState.lastObservedState 2>/dev/null || echo "No catalog sources found"
+    echo ""
+    echo "=== UNHEALTHY CATALOG SOURCES ==="
+    oc get catalogsource -A -o json 2>/dev/null | jq -r '.items[] | select(.status.connectionState.lastObservedState != "READY") | "\(.metadata.namespace)/\(.metadata.name): \(.status.connectionState.lastObservedState // "UNKNOWN")"' 2>/dev/null || echo "All catalog sources healthy"
+  register: debug_catalogsources
+
+- name: Display catalog sources
+  debug:
+    msg: "{{ debug_catalogsources.stdout_lines }}"
+
+- name: DEBUG - Pipelines/Tekton status
+  shell: |
+    echo "=== PIPELINES SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i pipeline || echo "No Pipelines subscriptions"
+    echo ""
+    echo "=== PIPELINES CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i pipeline || echo "No Pipelines CSVs"
+    echo ""
+    echo "=== TEKTON CONFIG ==="
+    oc get tektonconfig -A 2>/dev/null || echo "No TektonConfig found"
+    echo ""
+    echo "=== TEKTON PIPELINES ==="
+    oc get tektonpipeline -A 2>/dev/null || echo "No TektonPipeline found"
+  register: debug_pipelines
+
+- name: Display Pipelines status
+  debug:
+    msg: "{{ debug_pipelines.stdout_lines }}"
+
+- name: DEBUG - GitOps/ArgoCD status
+  shell: |
+    echo "=== GITOPS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i gitops || echo "No GitOps subscriptions"
+    echo ""
+    echo "=== GITOPS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i gitops || echo "No GitOps CSVs"
+    echo ""
+    echo "=== ARGOCD INSTANCES ==="
+    oc get argocd -A 2>/dev/null || echo "No ArgoCD instances"
+    echo ""
+    echo "=== GITOPS NAMESPACE ==="
+    oc get all -n openshift-gitops 2>/dev/null | head -15 || echo "openshift-gitops namespace not found"
+  register: debug_gitops
+
+- name: Display GitOps status
+  debug:
+    msg: "{{ debug_gitops.stdout_lines }}"
+
+- name: DEBUG - Serverless/Knative status
+  shell: |
+    echo "=== SERVERLESS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i serverless || echo "No Serverless subscriptions"
+    echo ""
+    echo "=== SERVERLESS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i serverless || echo "No Serverless CSVs"
+    echo ""
+    echo "=== KNATIVE SERVING ==="
+    oc get knativeserving -A 2>/dev/null || echo "No KnativeServing found"
+    echo ""
+    echo "=== KNATIVE EVENTING ==="
+    oc get knativeeventing -A 2>/dev/null || echo "No KnativeEventing found"
+  register: debug_serverless
+
+- name: Display Serverless status
+  debug:
+    msg: "{{ debug_serverless.stdout_lines }}"
+
+- name: DEBUG - Developer Hub/Backstage status
+  shell: |
+    echo "=== BACKSTAGE NAMESPACE ==="
+    oc get all -n backstage 2>/dev/null | head -20 || echo "backstage namespace not found"
+    echo ""
+    echo "=== JANUS-ARGOCD NAMESPACE ==="
+    oc get all -n janus-argocd 2>/dev/null | head -15 || echo "janus-argocd namespace not found"
+    echo ""
+    echo "=== RHDH PODS ==="
+    oc get pods -A 2>/dev/null | grep -i "backstage\|rhdh\|developer-hub" || echo "No RHDH pods found"
+  register: debug_rhdh
+
+- name: Display RHDH status
+  debug:
+    msg: "{{ debug_rhdh.stdout_lines }}"
+
+- name: DEBUG - RHACS/Stackrox status
+  shell: |
+    echo "=== RHACS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i rhacs || echo "No RHACS subscriptions"
+    echo ""
+    echo "=== RHACS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i rhacs || echo "No RHACS CSVs"
+    echo ""
+    echo "=== CENTRAL INSTANCE ==="
+    oc get central -A 2>/dev/null || echo "No Central instance found"
+    echo ""
+    echo "=== SECURED CLUSTERS ==="
+    oc get securedcluster -A 2>/dev/null || echo "No SecuredCluster found"
+  register: debug_rhacs
+
+- name: Display RHACS status
+  debug:
+    msg: "{{ debug_rhacs.stdout_lines }}"
+
+- name: DEBUG - OADP/Velero status
+  shell: |
+    echo "=== OADP SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i oadp || echo "No OADP subscriptions"
+    echo ""
+    echo "=== OADP CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i oadp || echo "No OADP CSVs"
+    echo ""
+    echo "=== DATA PROTECTION APPLICATION ==="
+    oc get dataprotectionapplication -A 2>/dev/null || echo "No DPA found"
+    echo ""
+    echo "=== BACKUP STORAGE LOCATIONS ==="
+    oc get backupstoragelocation -A 2>/dev/null || echo "No BSL found"
+  register: debug_oadp
+
+- name: Display OADP status
+  debug:
+    msg: "{{ debug_oadp.stdout_lines }}"
+
+- name: DEBUG - Showroom status
+  shell: |
+    echo "=== SHOWROOM NAMESPACES ==="
+    oc get ns 2>/dev/null | grep -i showroom || echo "No Showroom namespaces"
+    echo ""
+    echo "=== SHOWROOM PODS ==="
+    oc get pods -A 2>/dev/null | grep -i showroom || echo "No Showroom pods"
+    echo ""
+    echo "=== SHOWROOM ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i showroom || echo "No Showroom routes"
+  register: debug_showroom
+
+- name: Display Showroom status
+  debug:
+    msg: "{{ debug_showroom.stdout_lines }}"
+
+- name: DEBUG - InstallPlans (detect stuck installs)
+  shell: |
+    echo "=== PENDING INSTALLPLANS ==="
+    oc get installplan -A 2>/dev/null | grep -v "Complete" | head -20 || echo "All InstallPlans complete"
+    echo ""
+    echo "=== RECENT INSTALLPLANS ==="
+    oc get installplan -A --sort-by='.metadata.creationTimestamp' 2>/dev/null | tail -15 || echo "No InstallPlans"
+  register: debug_installplans
+
+- name: Display InstallPlans
+  debug:
+    msg: "{{ debug_installplans.stdout_lines }}"
+
+- name: DEBUG - Resource usage summary
+  shell: |
+    echo "=== NODE RESOURCE USAGE ==="
+    oc adm top nodes 2>/dev/null || echo "Metrics not available"
+    echo ""
+    echo "=== NAMESPACE COUNT ==="
+    oc get ns --no-headers 2>/dev/null | wc -l || echo "Unknown"
+    echo ""
+    echo "=== TOTAL POD COUNT ==="
+    oc get pods -A --no-headers 2>/dev/null | wc -l || echo "Unknown"
+  register: debug_resources
+
+- name: Display resource usage
+  debug:
+    msg: "{{ debug_resources.stdout_lines }}"
+
 - name: "DEBUG === END CLUSTER OVERVIEW ==="
   debug:
     msg: "Cluster diagnostics complete. Proceeding with workload setup..."
