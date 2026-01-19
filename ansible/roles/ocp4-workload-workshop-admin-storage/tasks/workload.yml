@@ -392,6 +392,86 @@
   debug:
     msg: "{{ debug_resources.stdout_lines }}"
 
+- name: DEBUG - Cert-manager status (first operator in chain)
+  shell: |
+    echo "=== CERT-MANAGER SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i cert-manager || echo "No cert-manager subscriptions"
+    echo ""
+    echo "=== CERT-MANAGER CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i cert-manager || echo "No cert-manager CSVs"
+    echo ""
+    echo "=== CERT-MANAGER NAMESPACE ==="
+    oc get all -n cert-manager 2>/dev/null | head -15 || echo "cert-manager namespace not found"
+    echo ""
+    echo "=== CERTIFICATES ==="
+    oc get certificate -A 2>/dev/null | head -10 || echo "No Certificates found"
+    echo ""
+    echo "=== CLUSTER ISSUERS ==="
+    oc get clusterissuer 2>/dev/null || echo "No ClusterIssuers found"
+  register: debug_certmanager
+
+- name: Display cert-manager status
+  debug:
+    msg: "{{ debug_certmanager.stdout_lines }}"
+
+- name: DEBUG - OperatorGroups (detect conflicts)
+  shell: |
+    echo "=== ALL OPERATORGROUPS ==="
+    oc get operatorgroup -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TARGETS:.spec.targetNamespaces 2>/dev/null || echo "No OperatorGroups found"
+    echo ""
+    echo "=== NAMESPACES WITH MULTIPLE OPERATORGROUPS (conflict!) ==="
+    oc get operatorgroup -A -o json 2>/dev/null | jq -r '[.items[] | {ns: .metadata.namespace}] | group_by(.ns) | .[] | select(length > 1) | .[0].ns' 2>/dev/null || echo "No conflicts"
+  register: debug_operatorgroups
+
+- name: Display OperatorGroups
+  debug:
+    msg: "{{ debug_operatorgroups.stdout_lines }}"
+
+- name: DEBUG - Minio status (S3 for RHDH)
+  shell: |
+    echo "=== MINIO NAMESPACE ==="
+    oc get all -n ic-shared-minio 2>/dev/null | head -15 || echo "ic-shared-minio namespace not found"
+    echo ""
+    echo "=== MINIO PODS ==="
+    oc get pods -A 2>/dev/null | grep -i minio || echo "No Minio pods"
+    echo ""
+    echo "=== MINIO ROUTES ==="
+    oc get routes -n ic-shared-minio 2>/dev/null || echo "No Minio routes"
+  register: debug_minio
+
+- name: Display Minio status
+  debug:
+    msg: "{{ debug_minio.stdout_lines }}"
+
+- name: DEBUG - Web Terminal status
+  shell: |
+    echo "=== WEB TERMINAL SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i web-terminal || echo "No Web Terminal subscriptions"
+    echo ""
+    echo "=== WEB TERMINAL CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i web-terminal || echo "No Web Terminal CSVs"
+    echo ""
+    echo "=== WEB TERMINAL NAMESPACE ==="
+    oc get all -n openshift-terminal 2>/dev/null | head -10 || echo "openshift-terminal namespace not found"
+  register: debug_webterminal
+
+- name: Display Web Terminal status
+  debug:
+    msg: "{{ debug_webterminal.stdout_lines }}"
+
+- name: DEBUG - GitLab status (for RHDH)
+  shell: |
+    echo "=== GITLAB PODS ==="
+    oc get pods -A 2>/dev/null | grep -i gitlab || echo "No GitLab pods"
+    echo ""
+    echo "=== GITLAB ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i gitlab || echo "No GitLab routes"
+  register: debug_gitlab
+
+- name: Display GitLab status
+  debug:
+    msg: "{{ debug_gitlab.stdout_lines }}"
+
 - name: "DEBUG === END CLUSTER OVERVIEW ==="
   debug:
     msg: "Cluster diagnostics complete. Proceeding with workload setup..."
