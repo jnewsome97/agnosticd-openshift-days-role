@@ -5,6 +5,216 @@
 # Keeps all cluster metadata gathering, swaps deployment for Showroom
 
 # ==============================================================================
+# COMPREHENSIVE DEBUG SECTION - Captures full cluster state for troubleshooting
+# ==============================================================================
+
+- name: "DEBUG === CLUSTER OVERVIEW ==="
+  debug:
+    msg: "Gathering comprehensive cluster diagnostics..."
+
+- name: DEBUG - Cluster version and status
+  shell: |
+    echo "=== CLUSTER VERSION ==="
+    oc get clusterversion
+    echo ""
+    echo "=== CLUSTER OPERATORS STATUS ==="
+    oc get co | grep -E "NAME|False|Unknown" || oc get co
+  register: debug_cluster_version
+
+- name: Display cluster version
+  debug:
+    msg: "{{ debug_cluster_version.stdout_lines }}"
+
+- name: DEBUG - Node status and instance types
+  shell: |
+    echo "=== ALL NODES ==="
+    oc get nodes -o wide
+    echo ""
+    echo "=== NODE DETAILS (instance types, zones) ==="
+    oc get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,INSTANCE:.metadata.labels.node\\.kubernetes\\.io/instance-type,ZONE:.metadata.labels.topology\\.kubernetes\\.io/zone,ROLES:.metadata.labels.node-role\\.kubernetes\\.io/worker
+  register: debug_nodes
+
+- name: Display node status
+  debug:
+    msg: "{{ debug_nodes.stdout_lines }}"
+
+- name: DEBUG - Storage classes available
+  shell: |
+    echo "=== STORAGE CLASSES ==="
+    oc get sc
+    echo ""
+    echo "=== DEFAULT STORAGE CLASS ==="
+    oc get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+    echo ""
+  register: debug_storage_classes
+
+- name: Display storage classes
+  debug:
+    msg: "{{ debug_storage_classes.stdout_lines }}"
+
+- name: DEBUG - All installed operators
+  shell: |
+    echo "=== INSTALLED CSVs (Operators) ==="
+    oc get csv -A --no-headers | grep -v Succeeded || echo "All operators Succeeded"
+    echo ""
+    echo "=== ALL CSVs ==="
+    oc get csv -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase | head -50
+  register: debug_operators
+
+- name: Display operators
+  debug:
+    msg: "{{ debug_operators.stdout_lines }}"
+
+- name: DEBUG - ODF/OpenShift Data Foundation status
+  shell: |
+    echo "=== ODF NAMESPACE ==="
+    oc get all -n openshift-storage 2>/dev/null | head -40 || echo "openshift-storage namespace not found"
+    echo ""
+    echo "=== STORAGE CLUSTER STATUS ==="
+    oc get storagecluster -n openshift-storage -o wide 2>/dev/null || echo "No StorageCluster found"
+    echo ""
+    echo "=== CEPH CLUSTER STATUS ==="
+    oc get cephcluster -n openshift-storage -o wide 2>/dev/null || echo "No CephCluster found"
+    echo ""
+    echo "=== ODF CSVs ==="
+    oc get csv -n openshift-storage 2>/dev/null || echo "No CSVs in openshift-storage"
+  register: debug_odf
+
+- name: Display ODF status
+  debug:
+    msg: "{{ debug_odf.stdout_lines }}"
+
+- name: DEBUG - OpenShift Virtualization (KubeVirt) status
+  shell: |
+    echo "=== CNV NAMESPACE ==="
+    oc get all -n openshift-cnv 2>/dev/null | head -30 || echo "openshift-cnv namespace not found"
+    echo ""
+    echo "=== HYPERCONVERGED STATUS ==="
+    oc get hyperconverged -n openshift-cnv -o wide 2>/dev/null || echo "No HyperConverged found"
+    echo ""
+    echo "=== KUBEVIRT STATUS ==="
+    oc get kubevirt -n openshift-cnv -o wide 2>/dev/null || echo "No KubeVirt found"
+    echo ""
+    echo "=== CNV CSVs ==="
+    oc get csv -n openshift-cnv 2>/dev/null || echo "No CSVs in openshift-cnv"
+  register: debug_cnv
+
+- name: Display CNV status
+  debug:
+    msg: "{{ debug_cnv.stdout_lines }}"
+
+- name: DEBUG - ACM/Multicluster Engine status
+  shell: |
+    echo "=== ACM NAMESPACE ==="
+    oc get all -n open-cluster-management 2>/dev/null | head -30 || echo "open-cluster-management namespace not found"
+    echo ""
+    echo "=== MULTICLUSTERHUB STATUS ==="
+    oc get multiclusterhub -A -o wide 2>/dev/null || echo "No MultiClusterHub found"
+    echo ""
+    echo "=== MULTICLUSTER ENGINE STATUS ==="
+    oc get multiclusterengine -A -o wide 2>/dev/null || echo "No MultiClusterEngine found"
+    echo ""
+    echo "=== MANAGED CLUSTERS ==="
+    oc get managedcluster -A 2>/dev/null || echo "No ManagedClusters found"
+    echo ""
+    echo "=== ACM CSVs ==="
+    oc get csv -n open-cluster-management 2>/dev/null | head -20 || echo "No CSVs in open-cluster-management"
+  register: debug_acm
+
+- name: Display ACM status
+  debug:
+    msg: "{{ debug_acm.stdout_lines }}"
+
+- name: DEBUG - MetalLB status
+  shell: |
+    echo "=== METALLB NAMESPACE ==="
+    oc get all -n metallb-system 2>/dev/null | head -20 || echo "metallb-system namespace not found"
+    echo ""
+    echo "=== METALLB CR ==="
+    oc get metallb -A -o wide 2>/dev/null || echo "No MetalLB CR found"
+    echo ""
+    echo "=== IP ADDRESS POOLS ==="
+    oc get ipaddresspool -A 2>/dev/null || echo "No IPAddressPools found"
+    echo ""
+    echo "=== L2 ADVERTISEMENTS ==="
+    oc get l2advertisement -A 2>/dev/null || echo "No L2Advertisements found"
+  register: debug_metallb
+
+- name: Display MetalLB status
+  debug:
+    msg: "{{ debug_metallb.stdout_lines }}"
+
+- name: DEBUG - HCP/Hypershift readiness
+  shell: |
+    echo "=== HCP CLI DOWNLOAD ==="
+    oc get deployment hcp-cli-download -n multicluster-engine 2>/dev/null || echo "hcp-cli-download not found"
+    echo ""
+    echo "=== HOSTED CLUSTERS ==="
+    oc get hostedcluster -A 2>/dev/null || echo "No HostedClusters found (CRD may not exist yet)"
+    echo ""
+    echo "=== CLUSTER IMAGE SETS ==="
+    oc get clusterimageset 2>/dev/null | head -10 || echo "No ClusterImageSets found"
+    echo ""
+    echo "=== INGRESS CONTROLLER WILDCARD POLICY ==="
+    oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.routeAdmission.wildcardPolicy}' 2>/dev/null || echo "Not set"
+    echo ""
+  register: debug_hcp
+
+- name: Display HCP readiness
+  debug:
+    msg: "{{ debug_hcp.stdout_lines }}"
+
+- name: DEBUG - Block devices on first worker (for storage debugging)
+  shell: |
+    FIRST_WORKER=$(oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -n "$FIRST_WORKER" ]; then
+      echo "=== WORKER: $FIRST_WORKER ==="
+      echo ""
+      echo "=== BLOCK DEVICES ==="
+      oc debug node/$FIRST_WORKER -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null || echo "Failed to get block devices"
+      echo ""
+      echo "=== INSTANCE TYPE ==="
+      oc debug node/$FIRST_WORKER -- chroot /host curl -s http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo "Failed to get instance type"
+    else
+      echo "No worker nodes found"
+    fi
+  register: debug_block_devices
+
+- name: Display block devices
+  debug:
+    msg: "{{ debug_block_devices.stdout_lines }}"
+
+- name: DEBUG - Pending/Failed pods across cluster
+  shell: |
+    echo "=== PODS NOT RUNNING (excluding Completed) ==="
+    oc get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | head -30 || echo "All pods running"
+    echo ""
+    echo "=== RECENT EVENTS (warnings/errors) ==="
+    oc get events -A --field-selector type!=Normal --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No warning events"
+  register: debug_pods
+
+- name: Display pod issues
+  debug:
+    msg: "{{ debug_pods.stdout_lines }}"
+
+- name: DEBUG - PVCs and PVs status
+  shell: |
+    echo "=== PVCS (non-Bound) ==="
+    oc get pvc -A --field-selector=status.phase!=Bound 2>/dev/null | head -20 || echo "All PVCs bound"
+    echo ""
+    echo "=== PV SUMMARY ==="
+    oc get pv 2>/dev/null | head -20 || echo "No PVs found"
+  register: debug_pvcs
+
+- name: Display PVC status
+  debug:
+    msg: "{{ debug_pvcs.stdout_lines }}"
+
+- name: "DEBUG === END CLUSTER OVERVIEW ==="
+  debug:
+    msg: "Cluster diagnostics complete. Proceeding with workload setup..."
+
+# ==============================================================================
 # LVMS Deployment Section (optional - enabled via workshop_deploy_lvms: true)
 # Deploys LVMS operator with optionalPaths for AWS NVMe device handling
 # ==============================================================================
