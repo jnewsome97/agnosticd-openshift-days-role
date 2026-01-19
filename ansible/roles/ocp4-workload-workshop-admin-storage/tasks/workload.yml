@@ -111,6 +111,156 @@
   delay: 10
   when: workshop_deploy_lvms | default(false) | bool
 
+# ==============================================================================
+# DEBUG: Comprehensive block device and instance information gathering
+# ==============================================================================
+- name: Get worker node names and instance types
+  shell: |
+    oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{range .items[*]}Node: {.metadata.name} | Instance Type: {.metadata.labels.node\.kubernetes\.io/instance-type}{"\n"}{end}'
+  register: worker_info
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display worker node info
+  debug:
+    msg: "{{ worker_info.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Get first worker node name
+  shell: |
+    oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[0].metadata.name}'
+  register: first_worker
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get AWS instance metadata (instance type verification)
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host bash -c 'curl -s http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo "metadata not available"'
+  register: aws_instance_type
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display AWS instance type from metadata
+  debug:
+    msg: "AWS Instance Type: {{ aws_instance_type.stdout }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get ALL block devices with full details
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host lsblk -o NAME,SIZE,TYPE,MODEL,MOUNTPOINT,FSTYPE,STATE 2>/dev/null || echo "Failed"
+  register: block_devices
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display block devices
+  debug:
+    msg: "{{ block_devices.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get /dev/disk/by-id mappings (stable device names)
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host ls -la /dev/disk/by-id/ 2>/dev/null | head -30 || echo "Failed"
+  register: disk_by_id
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display disk-by-id mappings
+  debug:
+    msg: "{{ disk_by_id.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get NVMe device details
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host nvme list 2>/dev/null || echo "nvme command not available"
+  register: nvme_details
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display NVMe device details
+  debug:
+    msg: "{{ nvme_details.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Check dmesg for NVMe device detection
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host dmesg 2>/dev/null | grep -i nvme | tail -20 || echo "No NVMe in dmesg"
+  register: dmesg_nvme
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display dmesg NVMe entries
+  debug:
+    msg: "{{ dmesg_nvme.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get all mounts
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host mount 2>/dev/null | grep -E 'nvme|sd|xvd|rbd' || echo "No relevant mounts"
+  register: mounts
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display mounts
+  debug:
+    msg: "{{ mounts.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Check what Ceph/ODF is using
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host bash -c 'ls -la /var/lib/rook/ 2>/dev/null || echo "No /var/lib/rook"; pvs 2>/dev/null || echo "pvs not available"; vgs 2>/dev/null || echo "vgs not available"'
+  register: ceph_usage
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display Ceph/ODF usage
+  debug:
+    msg: "{{ ceph_usage.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Check for any unmounted/available devices
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host bash -c 'lsblk -d -n -o NAME,SIZE,TYPE,MOUNTPOINT | grep -v loop | while read dev; do echo "$dev"; done'
+  register: available_devices
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display available devices
+  debug:
+    msg: "{{ available_devices.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Get device sizes in bytes for comparison
+  shell: |
+    oc debug node/{{ first_worker.stdout }} -- chroot /host lsblk -b -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null | grep -v loop || echo "Failed"
+  register: device_sizes
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display device sizes in bytes
+  debug:
+    msg: "{{ device_sizes.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Check second worker for comparison
+  shell: |
+    SECOND_WORKER=$(oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[1].metadata.name}')
+    echo "=== Second worker: $SECOND_WORKER ==="
+    oc debug node/$SECOND_WORKER -- chroot /host lsblk -d -o NAME,SIZE,TYPE,MODEL 2>/dev/null || echo "Failed"
+  register: second_worker_devices
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display second worker devices
+  debug:
+    msg: "{{ second_worker_devices.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: DEBUG - Summary of all workers instance types
+  shell: |
+    for node in $(oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[*].metadata.name}'); do
+      INSTANCE_TYPE=$(oc debug node/$node -- chroot /host curl -s http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null)
+      BLOCK_DEV_COUNT=$(oc debug node/$node -- chroot /host lsblk -d -n 2>/dev/null | grep -v loop | wc -l)
+      echo "Node: $node | Instance: $INSTANCE_TYPE | Block devices: $BLOCK_DEV_COUNT"
+    done
+  register: all_workers_summary
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display all workers summary
+  debug:
+    msg: "{{ all_workers_summary.stdout_lines }}"
+  when: workshop_deploy_lvms | default(false) | bool
+# ==============================================================================
+# END DEBUG
+# ==============================================================================
+
 - name: Create LVMCluster with optionalPaths
   kubernetes.core.k8s:
     state: present
