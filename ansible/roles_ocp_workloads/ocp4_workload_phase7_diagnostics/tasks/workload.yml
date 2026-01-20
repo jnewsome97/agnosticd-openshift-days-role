@@ -1,0 +1,612 @@
+---
+# vim: set ft=ansible
+# ocp4_workload_phase7_diagnostics - Comprehensive Phase 7 Diagnostics
+#
+# TEMPORARY DEBUGGING WORKLOAD - Remove after troubleshooting
+# This role provides extensive diagnostic output for Phase 7 (Developer Experience) workloads
+#
+# To remove: Delete 'ocp4_workload_phase7_diagnostics' from infra_workloads in dev-ops-101.yaml
+
+- name: "=== PHASE 7 DIAGNOSTICS START ==="
+  debug:
+    msg: |
+      ============================================================
+      PHASE 7 DIAGNOSTICS - Developer Experience Components
+      ============================================================
+      This diagnostic workload checks:
+        - Minio (S3 storage for Dev Hub)
+        - GitOps/GitLab/ArgoCD
+        - RHDH Orchestrator (Serverless, SonataFlow)
+        - RHDH Bootstrap (Quay, Vault, External Secrets)
+        - Red Hat Developer Hub (Backstage, GitLab Runner)
+      ============================================================
+
+# ==============================================================================
+# SECTION 1: MINIO DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === MINIO S3 STORAGE ==="
+  debug:
+    msg: "Checking Minio S3 storage status..."
+  when: phase7_diag_minio | default(true) | bool
+
+- name: DIAG - Minio namespace and resources
+  shell: |
+    echo "=== MINIO NAMESPACE (ic-shared-minio) ==="
+    oc get ns ic-shared-minio 2>/dev/null && echo "Namespace exists" || echo "MISSING: ic-shared-minio namespace not found"
+    echo ""
+    echo "=== MINIO ALL RESOURCES ==="
+    oc get all -n ic-shared-minio 2>/dev/null || echo "No resources in ic-shared-minio"
+    echo ""
+    echo "=== MINIO PODS STATUS ==="
+    oc get pods -n ic-shared-minio -o wide 2>/dev/null || echo "No pods"
+    echo ""
+    echo "=== MINIO POD LOGS (last 30 lines) ==="
+    oc logs -n ic-shared-minio -l app=minio --tail=30 2>/dev/null || echo "No minio pod logs"
+    echo ""
+    echo "=== MINIO ROUTES ==="
+    oc get routes -n ic-shared-minio -o wide 2>/dev/null || echo "No routes"
+    echo ""
+    echo "=== MINIO SECRETS ==="
+    oc get secrets -n ic-shared-minio 2>/dev/null || echo "No secrets"
+    echo ""
+    echo "=== MINIO PVC STATUS ==="
+    oc get pvc -n ic-shared-minio 2>/dev/null || echo "No PVCs"
+    echo ""
+    echo "=== MINIO SERVICE ENDPOINTS ==="
+    oc get endpoints -n ic-shared-minio 2>/dev/null || echo "No endpoints"
+  register: diag_minio
+  when: phase7_diag_minio | default(true) | bool
+
+- name: Display Minio diagnostics
+  debug:
+    msg: "{{ diag_minio.stdout_lines }}"
+  when: phase7_diag_minio | default(true) | bool
+
+# ==============================================================================
+# SECTION 2: GITOPS/ARGOCD DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === GITOPS/ARGOCD ==="
+  debug:
+    msg: "Checking GitOps/ArgoCD status..."
+  when: phase7_diag_gitops | default(true) | bool
+
+- name: DIAG - GitOps operator and subscriptions
+  shell: |
+    echo "=== GITOPS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i gitops || echo "No GitOps subscriptions"
+    echo ""
+    echo "=== GITOPS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i gitops || echo "No GitOps CSVs"
+    echo ""
+    echo "=== GITOPS CSV STATUS DETAIL ==="
+    for csv in $(oc get csv -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -i gitops); do
+      ns=$(echo $csv | cut -d'/' -f1)
+      name=$(echo $csv | cut -d'/' -f2)
+      echo "--- $ns/$name ---"
+      oc get csv $name -n $ns -o jsonpath='{.status.phase}: {.status.message}' 2>/dev/null
+      echo ""
+    done
+    echo ""
+    echo "=== OPENSHIFT-GITOPS NAMESPACE ==="
+    oc get all -n openshift-gitops 2>/dev/null | head -40 || echo "openshift-gitops namespace not found"
+    echo ""
+    echo "=== ARGOCD INSTANCES ==="
+    oc get argocd -A -o wide 2>/dev/null || echo "No ArgoCD instances"
+    echo ""
+    echo "=== ARGOCD INSTANCE STATUS ==="
+    oc get argocd -A -o jsonpath='{range .items[*]}Namespace: {.metadata.namespace}, Name: {.metadata.name}, Phase: {.status.phase}{"\n"}{end}' 2>/dev/null || echo "No status"
+    echo ""
+    echo "=== ARGOCD APPLICATIONS ==="
+    oc get applications.argoproj.io -A 2>/dev/null | head -30 || echo "No ArgoCD applications"
+    echo ""
+    echo "=== ARGOCD APPLICATION HEALTH ==="
+    oc get applications.argoproj.io -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: Health={.status.health.status}, Sync={.status.sync.status}{"\n"}{end}' 2>/dev/null || echo "No application health"
+  register: diag_gitops
+  when: phase7_diag_gitops | default(true) | bool
+
+- name: Display GitOps diagnostics
+  debug:
+    msg: "{{ diag_gitops.stdout_lines }}"
+  when: phase7_diag_gitops | default(true) | bool
+
+# ==============================================================================
+# SECTION 3: GITLAB DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === GITLAB ==="
+  debug:
+    msg: "Checking GitLab status..."
+  when: phase7_diag_gitlab | default(true) | bool
+
+- name: DIAG - GitLab deployment
+  shell: |
+    echo "=== GITLAB NAMESPACES ==="
+    oc get ns 2>/dev/null | grep -i gitlab || echo "No GitLab namespaces"
+    echo ""
+    echo "=== GITLAB PODS (all namespaces) ==="
+    oc get pods -A 2>/dev/null | grep -i gitlab || echo "No GitLab pods"
+    echo ""
+    echo "=== GITLAB PODS STATUS DETAIL ==="
+    for ns in $(oc get ns -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i gitlab); do
+      echo "--- Namespace: $ns ---"
+      oc get pods -n $ns -o wide 2>/dev/null
+      echo ""
+    done
+    echo ""
+    echo "=== GITLAB ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i gitlab || echo "No GitLab routes"
+    echo ""
+    echo "=== GITLAB DEPLOYMENTS ==="
+    oc get deployments -A 2>/dev/null | grep -i gitlab || echo "No GitLab deployments"
+    echo ""
+    echo "=== GITLAB STATEFULSETS ==="
+    oc get statefulsets -A 2>/dev/null | grep -i gitlab || echo "No GitLab statefulsets"
+    echo ""
+    echo "=== GITLAB PVCs ==="
+    oc get pvc -A 2>/dev/null | grep -i gitlab || echo "No GitLab PVCs"
+    echo ""
+    echo "=== GITLAB SECRETS (names only) ==="
+    oc get secrets -A 2>/dev/null | grep -i gitlab | awk '{print $1, $2}' || echo "No GitLab secrets"
+  register: diag_gitlab
+  when: phase7_diag_gitlab | default(true) | bool
+
+- name: Display GitLab diagnostics
+  debug:
+    msg: "{{ diag_gitlab.stdout_lines }}"
+  when: phase7_diag_gitlab | default(true) | bool
+
+# ==============================================================================
+# SECTION 4: RHDH ORCHESTRATOR (SERVERLESS/SONATAFLOW) DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === RHDH ORCHESTRATOR ==="
+  debug:
+    msg: "Checking RHDH Orchestrator (Serverless/SonataFlow) status..."
+  when: phase7_diag_orchestrator | default(true) | bool
+
+- name: DIAG - Serverless/Knative
+  shell: |
+    echo "=== SERVERLESS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i serverless || echo "No Serverless subscriptions"
+    echo ""
+    echo "=== SERVERLESS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i serverless || echo "No Serverless CSVs"
+    echo ""
+    echo "=== KNATIVE SERVING ==="
+    oc get knativeserving -A -o wide 2>/dev/null || echo "No KnativeServing"
+    echo ""
+    echo "=== KNATIVE SERVING STATUS ==="
+    oc get knativeserving -A -o jsonpath='{range .items[*]}Name: {.metadata.name}, Ready: {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null || echo "No status"
+    echo ""
+    echo "=== KNATIVE EVENTING ==="
+    oc get knativeeventing -A -o wide 2>/dev/null || echo "No KnativeEventing"
+    echo ""
+    echo "=== KNATIVE-SERVING NAMESPACE ==="
+    oc get pods -n knative-serving 2>/dev/null || echo "knative-serving namespace not found"
+    echo ""
+    echo "=== KNATIVE-EVENTING NAMESPACE ==="
+    oc get pods -n knative-eventing 2>/dev/null || echo "knative-eventing namespace not found"
+  register: diag_serverless
+  when: phase7_diag_serverless | default(true) | bool
+
+- name: Display Serverless diagnostics
+  debug:
+    msg: "{{ diag_serverless.stdout_lines }}"
+  when: phase7_diag_serverless | default(true) | bool
+
+- name: DIAG - SonataFlow/Orchestrator
+  shell: |
+    echo "=== ORCHESTRATOR SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i orchestrator || echo "No Orchestrator subscriptions"
+    echo ""
+    echo "=== SONATAFLOW NAMESPACE ==="
+    oc get all -n sonataflow-infra 2>/dev/null | head -30 || echo "sonataflow-infra namespace not found"
+    echo ""
+    echo "=== SONATAFLOW PODS ==="
+    oc get pods -n sonataflow-infra -o wide 2>/dev/null || echo "No SonataFlow pods"
+    echo ""
+    echo "=== SONATAFLOW PLATFORM ==="
+    oc get sonataflowplatform -A 2>/dev/null || echo "No SonataFlowPlatform"
+    echo ""
+    echo "=== SONATAFLOW WORKFLOWS ==="
+    oc get sonataflow -A 2>/dev/null || echo "No SonataFlow workflows"
+    echo ""
+    echo "=== SONATAFLOW CLUSTERPLATFORM ==="
+    oc get sonataflowclusterplatform -A 2>/dev/null || echo "No SonataFlowClusterPlatform"
+    echo ""
+    echo "=== ORCHESTRATOR HELM RELEASES ==="
+    oc get secrets -A -l owner=helm 2>/dev/null | grep -i orchestrator || echo "No Orchestrator helm releases"
+  register: diag_orchestrator
+  when: phase7_diag_orchestrator | default(true) | bool
+
+- name: Display Orchestrator diagnostics
+  debug:
+    msg: "{{ diag_orchestrator.stdout_lines }}"
+  when: phase7_diag_orchestrator | default(true) | bool
+
+# ==============================================================================
+# SECTION 5: QUAY OPERATOR DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === QUAY REGISTRY ==="
+  debug:
+    msg: "Checking Quay Registry status..."
+  when: phase7_diag_quay | default(true) | bool
+
+- name: DIAG - Quay operator and registry
+  shell: |
+    echo "=== QUAY SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i quay || echo "No Quay subscriptions"
+    echo ""
+    echo "=== QUAY SUBSCRIPTION DETAILS ==="
+    oc get subscriptions.operators.coreos.com -A -o json 2>/dev/null | jq -r '.items[] | select(.spec.name | test("quay"; "i")) | "Namespace: \(.metadata.namespace), Name: \(.metadata.name), Channel: \(.spec.channel), Source: \(.spec.source), State: \(.status.state // "unknown")"' 2>/dev/null || echo "No Quay subscription details"
+    echo ""
+    echo "=== QUAY CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i quay || echo "No Quay CSVs"
+    echo ""
+    echo "=== QUAY CSV STATUS ==="
+    for csv in $(oc get csv -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -i quay); do
+      ns=$(echo $csv | cut -d'/' -f1)
+      name=$(echo $csv | cut -d'/' -f2)
+      echo "--- $ns/$name ---"
+      oc get csv $name -n $ns -o jsonpath='Phase: {.status.phase}, Reason: {.status.reason}' 2>/dev/null
+      echo ""
+    done
+    echo ""
+    echo "=== QUAY REGISTRY INSTANCES ==="
+    oc get quayregistry -A -o wide 2>/dev/null || echo "No QuayRegistry instances"
+    echo ""
+    echo "=== QUAY NAMESPACES ==="
+    oc get ns 2>/dev/null | grep -i quay || echo "No Quay namespaces"
+    echo ""
+    echo "=== QUAY PODS ==="
+    oc get pods -A 2>/dev/null | grep -i quay | head -30 || echo "No Quay pods"
+    echo ""
+    echo "=== QUAY ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i quay || echo "No Quay routes"
+  register: diag_quay
+  when: phase7_diag_quay | default(true) | bool
+
+- name: Display Quay diagnostics
+  debug:
+    msg: "{{ diag_quay.stdout_lines }}"
+  when: phase7_diag_quay | default(true) | bool
+
+# ==============================================================================
+# SECTION 6: VAULT DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === VAULT ==="
+  debug:
+    msg: "Checking Vault status..."
+  when: phase7_diag_vault | default(true) | bool
+
+- name: DIAG - Vault deployment
+  shell: |
+    echo "=== VAULT NAMESPACES ==="
+    oc get ns 2>/dev/null | grep -i vault || echo "No Vault namespaces"
+    echo ""
+    echo "=== VAULT PODS ==="
+    oc get pods -A 2>/dev/null | grep -i vault || echo "No Vault pods"
+    echo ""
+    echo "=== VAULT STATEFULSETS ==="
+    oc get statefulsets -A 2>/dev/null | grep -i vault || echo "No Vault statefulsets"
+    echo ""
+    echo "=== VAULT SERVICES ==="
+    oc get svc -A 2>/dev/null | grep -i vault || echo "No Vault services"
+    echo ""
+    echo "=== VAULT ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i vault || echo "No Vault routes"
+    echo ""
+    echo "=== VAULT HELM RELEASES ==="
+    oc get secrets -A -l owner=helm 2>/dev/null | grep -i vault || echo "No Vault helm releases"
+  register: diag_vault
+  when: phase7_diag_vault | default(true) | bool
+
+- name: Display Vault diagnostics
+  debug:
+    msg: "{{ diag_vault.stdout_lines }}"
+  when: phase7_diag_vault | default(true) | bool
+
+# ==============================================================================
+# SECTION 7: EXTERNAL SECRETS DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === EXTERNAL SECRETS ==="
+  debug:
+    msg: "Checking External Secrets Operator status..."
+  when: phase7_diag_external_secrets | default(true) | bool
+
+- name: DIAG - External Secrets operator
+  shell: |
+    echo "=== EXTERNAL SECRETS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i "external-secrets\|external_secrets" || echo "No External Secrets subscriptions"
+    echo ""
+    echo "=== EXTERNAL SECRETS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i "external-secrets\|external_secrets" || echo "No External Secrets CSVs"
+    echo ""
+    echo "=== EXTERNAL SECRETS PODS ==="
+    oc get pods -A 2>/dev/null | grep -i "external-secrets" || echo "No External Secrets pods"
+    echo ""
+    echo "=== CLUSTER SECRET STORES ==="
+    oc get clustersecretstore -A 2>/dev/null || echo "No ClusterSecretStores (CRD may not exist)"
+    echo ""
+    echo "=== SECRET STORES ==="
+    oc get secretstore -A 2>/dev/null || echo "No SecretStores (CRD may not exist)"
+    echo ""
+    echo "=== EXTERNAL SECRETS ==="
+    oc get externalsecret -A 2>/dev/null | head -20 || echo "No ExternalSecrets (CRD may not exist)"
+  register: diag_external_secrets
+  when: phase7_diag_external_secrets | default(true) | bool
+
+- name: Display External Secrets diagnostics
+  debug:
+    msg: "{{ diag_external_secrets.stdout_lines }}"
+  when: phase7_diag_external_secrets | default(true) | bool
+
+# ==============================================================================
+# SECTION 8: RED HAT DEVELOPER HUB (BACKSTAGE) DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === RED HAT DEVELOPER HUB (BACKSTAGE) ==="
+  debug:
+    msg: "Checking Red Hat Developer Hub (Backstage) status..."
+  when: phase7_diag_backstage | default(true) | bool
+
+- name: DIAG - Backstage/RHDH
+  shell: |
+    echo "=== BACKSTAGE NAMESPACE ==="
+    oc get all -n backstage 2>/dev/null | head -40 || echo "backstage namespace not found"
+    echo ""
+    echo "=== BACKSTAGE PODS ==="
+    oc get pods -n backstage -o wide 2>/dev/null || echo "No pods in backstage namespace"
+    echo ""
+    echo "=== BACKSTAGE POD LOGS (last 50 lines) ==="
+    oc logs -n backstage -l app.kubernetes.io/name=backstage --tail=50 2>/dev/null || echo "No backstage pod logs"
+    echo ""
+    echo "=== BACKSTAGE DEPLOYMENTS ==="
+    oc get deployments -n backstage -o wide 2>/dev/null || echo "No deployments"
+    echo ""
+    echo "=== BACKSTAGE ROUTES ==="
+    oc get routes -n backstage -o wide 2>/dev/null || echo "No routes"
+    echo ""
+    echo "=== BACKSTAGE CONFIGMAPS ==="
+    oc get configmaps -n backstage 2>/dev/null || echo "No configmaps"
+    echo ""
+    echo "=== BACKSTAGE SECRETS (names only) ==="
+    oc get secrets -n backstage 2>/dev/null | awk '{print $1}' || echo "No secrets"
+    echo ""
+    echo "=== JANUS-ARGOCD NAMESPACE ==="
+    oc get all -n janus-argocd 2>/dev/null | head -20 || echo "janus-argocd namespace not found"
+    echo ""
+    echo "=== RHDH/BACKSTAGE HELM RELEASES ==="
+    oc get secrets -A -l owner=helm 2>/dev/null | grep -i "backstage\|rhdh\|developer-hub" || echo "No RHDH helm releases"
+    echo ""
+    echo "=== BACKSTAGE/RHDH PODS IN ALL NAMESPACES ==="
+    oc get pods -A 2>/dev/null | grep -i "backstage\|rhdh\|developer-hub" | head -20 || echo "No RHDH pods found"
+  register: diag_backstage
+  when: phase7_diag_backstage | default(true) | bool
+
+- name: Display Backstage diagnostics
+  debug:
+    msg: "{{ diag_backstage.stdout_lines }}"
+  when: phase7_diag_backstage | default(true) | bool
+
+# ==============================================================================
+# SECTION 9: GITLAB RUNNER DIAGNOSTICS
+# ==============================================================================
+
+- name: "DIAG === GITLAB RUNNER ==="
+  debug:
+    msg: "Checking GitLab Runner operator status..."
+  when: phase7_diag_gitlab_runner | default(true) | bool
+
+- name: DIAG - GitLab Runner operator
+  shell: |
+    echo "=== GITLAB RUNNER SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i "gitlab-runner\|gitlab_runner" || echo "No GitLab Runner subscriptions"
+    echo ""
+    echo "=== GITLAB RUNNER SUBSCRIPTION DETAILS ==="
+    oc get subscriptions.operators.coreos.com -A -o json 2>/dev/null | jq -r '.items[] | select(.spec.name | test("gitlab.*runner"; "i")) | "Namespace: \(.metadata.namespace), Name: \(.metadata.name), Channel: \(.spec.channel), Source: \(.spec.source), State: \(.status.state // "unknown")"' 2>/dev/null || echo "No subscription details"
+    echo ""
+    echo "=== GITLAB RUNNER CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i "gitlab-runner\|gitlab_runner" || echo "No GitLab Runner CSVs"
+    echo ""
+    echo "=== GITLAB RUNNER CSV STATUS ==="
+    for csv in $(oc get csv -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -i gitlab-runner); do
+      ns=$(echo $csv | cut -d'/' -f1)
+      name=$(echo $csv | cut -d'/' -f2)
+      echo "--- $ns/$name ---"
+      oc get csv $name -n $ns -o jsonpath='Phase: {.status.phase}, Message: {.status.message}' 2>/dev/null
+      echo ""
+    done
+    echo ""
+    echo "=== GITLAB RUNNER CRs ==="
+    oc get runner -A 2>/dev/null || echo "No Runner CRs (CRD may not exist)"
+    echo ""
+    echo "=== GITLAB RUNNER PODS ==="
+    oc get pods -A 2>/dev/null | grep -i "gitlab-runner" || echo "No GitLab Runner pods"
+  register: diag_gitlab_runner
+  when: phase7_diag_gitlab_runner | default(true) | bool
+
+- name: Display GitLab Runner diagnostics
+  debug:
+    msg: "{{ diag_gitlab_runner.stdout_lines }}"
+  when: phase7_diag_gitlab_runner | default(true) | bool
+
+# ==============================================================================
+# SECTION 10: ALL PHASE 7 OPERATORS SUMMARY
+# ==============================================================================
+
+- name: "DIAG === PHASE 7 OPERATORS SUMMARY ==="
+  debug:
+    msg: "Generating Phase 7 operators summary..."
+  when: phase7_diag_operators | default(true) | bool
+
+- name: DIAG - Phase 7 operators overview
+  shell: |
+    echo "=== PHASE 7 OPERATOR SUBSCRIPTIONS ==="
+    echo "Looking for: minio, gitlab, argocd, gitops, serverless, quay, vault, external-secrets, backstage, rhdh, orchestrator"
+    echo ""
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator" || echo "No Phase 7 operator subscriptions found"
+    echo ""
+    echo "=== PHASE 7 CSVs STATUS ==="
+    oc get csv -A 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator" || echo "No Phase 7 CSVs found"
+    echo ""
+    echo "=== PHASE 7 INSTALL PLANS ==="
+    oc get installplan -A 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator" | head -20 || echo "No Phase 7 InstallPlans found"
+    echo ""
+    echo "=== PENDING/FAILED INSTALL PLANS ==="
+    oc get installplan -A 2>/dev/null | grep -v "Complete" | head -20 || echo "All InstallPlans complete"
+  register: diag_operators
+  when: phase7_diag_operators | default(true) | bool
+
+- name: Display operators summary
+  debug:
+    msg: "{{ diag_operators.stdout_lines }}"
+  when: phase7_diag_operators | default(true) | bool
+
+# ==============================================================================
+# SECTION 11: CATALOG SOURCES FOR PHASE 7
+# ==============================================================================
+
+- name: "DIAG === CATALOG SOURCES ==="
+  debug:
+    msg: "Checking catalog sources used by Phase 7 workloads..."
+  when: phase7_diag_subscriptions | default(true) | bool
+
+- name: DIAG - Catalog sources status
+  shell: |
+    echo "=== ALL CATALOG SOURCES ==="
+    oc get catalogsource -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TYPE:.spec.sourceType,IMAGE:.spec.image,STATUS:.status.connectionState.lastObservedState 2>/dev/null || echo "No catalog sources"
+    echo ""
+    echo "=== UNHEALTHY CATALOG SOURCES ==="
+    oc get catalogsource -A -o json 2>/dev/null | jq -r '.items[] | select(.status.connectionState.lastObservedState != "READY") | "\(.metadata.namespace)/\(.metadata.name): \(.status.connectionState.lastObservedState // "UNKNOWN") - \(.spec.image // "no image")"' 2>/dev/null || echo "All catalog sources healthy"
+    echo ""
+    echo "=== CERTIFIED-OPERATORS CATALOG (for GitLab Runner) ==="
+    oc get catalogsource certified-operators -n openshift-marketplace -o yaml 2>/dev/null | grep -A5 "status:" || echo "certified-operators not found"
+    echo ""
+    echo "=== REDHAT-OPERATORS CATALOG ==="
+    oc get catalogsource redhat-operators -n openshift-marketplace -o yaml 2>/dev/null | grep -A5 "status:" || echo "redhat-operators not found"
+  register: diag_catalogsources
+  when: phase7_diag_subscriptions | default(true) | bool
+
+- name: Display catalog sources
+  debug:
+    msg: "{{ diag_catalogsources.stdout_lines }}"
+  when: phase7_diag_subscriptions | default(true) | bool
+
+# ==============================================================================
+# SECTION 12: PHASE 7 PODS AND EVENTS
+# ==============================================================================
+
+- name: "DIAG === PODS AND EVENTS ==="
+  debug:
+    msg: "Checking Phase 7 pods and events..."
+  when: phase7_diag_pods | default(true) | bool
+
+- name: DIAG - Phase 7 related pods not running
+  shell: |
+    echo "=== PHASE 7 PODS NOT RUNNING ==="
+    oc get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator|sonataflow|knative|janus" | head -30 || echo "All Phase 7 pods running"
+    echo ""
+    echo "=== PHASE 7 POD ERRORS (CrashLoopBackOff, Error, ImagePullBackOff) ==="
+    oc get pods -A 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator|sonataflow|knative|janus" | grep -iE "CrashLoop|Error|ImagePull|Pending|Init" | head -20 || echo "No Phase 7 pod errors"
+    echo ""
+    echo "=== PHASE 7 CONTAINER RESTARTS (>0) ==="
+    oc get pods -A -o json 2>/dev/null | jq -r '.items[] | select(.status.containerStatuses[]?.restartCount > 0) | select(.metadata.name | test("minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator|sonataflow|knative|janus"; "i")) | "\(.metadata.namespace)/\(.metadata.name): \(.status.containerStatuses[].restartCount) restarts"' 2>/dev/null | head -20 || echo "No restart data"
+  register: diag_pods
+  when: phase7_diag_pods | default(true) | bool
+
+- name: Display pods diagnostics
+  debug:
+    msg: "{{ diag_pods.stdout_lines }}"
+  when: phase7_diag_pods | default(true) | bool
+
+- name: DIAG - Phase 7 warning events
+  shell: |
+    echo "=== PHASE 7 WARNING/ERROR EVENTS (last 30 minutes) ==="
+    oc get events -A --field-selector type!=Normal --sort-by='.lastTimestamp' 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|serverless|quay|vault|external-secrets|backstage|rhdh|orchestrator|sonataflow|knative|janus" | tail -40 || echo "No Phase 7 warning events"
+    echo ""
+    echo "=== RECENT EVENTS IN KEY NAMESPACES ==="
+    for ns in backstage janus-argocd openshift-gitops ic-shared-minio sonataflow-infra knative-serving; do
+      echo "--- Events in $ns (last 10) ---"
+      oc get events -n $ns --sort-by='.lastTimestamp' 2>/dev/null | tail -10 || echo "Namespace $ns not found or no events"
+      echo ""
+    done
+  register: diag_events
+  when: phase7_diag_events | default(true) | bool
+
+- name: Display events diagnostics
+  debug:
+    msg: "{{ diag_events.stdout_lines }}"
+  when: phase7_diag_events | default(true) | bool
+
+# ==============================================================================
+# SECTION 13: PVC STATUS FOR PHASE 7
+# ==============================================================================
+
+- name: "DIAG === PVC STATUS ==="
+  debug:
+    msg: "Checking PVC status for Phase 7 workloads..."
+
+- name: DIAG - Phase 7 PVCs
+  shell: |
+    echo "=== PHASE 7 PVCs ==="
+    oc get pvc -A 2>/dev/null | grep -iE "minio|gitlab|argocd|gitops|quay|vault|backstage|rhdh|orchestrator|sonataflow|postgres" | head -30 || echo "No Phase 7 PVCs"
+    echo ""
+    echo "=== PENDING PVCs ==="
+    oc get pvc -A --field-selector=status.phase!=Bound 2>/dev/null | head -20 || echo "All PVCs bound"
+    echo ""
+    echo "=== PVC DETAILS IN KEY NAMESPACES ==="
+    for ns in backstage ic-shared-minio sonataflow-infra; do
+      echo "--- PVCs in $ns ---"
+      oc get pvc -n $ns -o wide 2>/dev/null || echo "Namespace $ns not found or no PVCs"
+      echo ""
+    done
+  register: diag_pvcs
+
+- name: Display PVC diagnostics
+  debug:
+    msg: "{{ diag_pvcs.stdout_lines }}"
+
+# ==============================================================================
+# FINAL SUMMARY
+# ==============================================================================
+
+- name: "=== PHASE 7 DIAGNOSTICS COMPLETE ==="
+  debug:
+    msg: |
+      ============================================================
+      PHASE 7 DIAGNOSTICS COMPLETE
+      ============================================================
+      Review the output above for any issues with:
+        - Minio S3 storage
+        - GitOps/GitLab/ArgoCD
+        - RHDH Orchestrator (Serverless, SonataFlow)
+        - Quay Registry
+        - Vault
+        - External Secrets
+        - Red Hat Developer Hub (Backstage)
+        - GitLab Runner
+
+      Common issues to look for:
+        - Subscriptions in "UpgradePending" or failed state
+        - CSVs not in "Succeeded" phase
+        - Pods in CrashLoopBackOff or ImagePullBackOff
+        - PVCs stuck in Pending
+        - Catalog sources not READY
+        - InstallPlans not completing
+
+      TO REMOVE THIS DIAGNOSTIC WORKLOAD:
+        1. Edit dev-ops-101.yaml
+        2. Remove 'ocp4_workload_phase7_diagnostics' from infra_workloads
+        3. Optionally delete: ansible/roles_ocp_workloads/ocp4_workload_phase7_diagnostics/
+      ============================================================
+
+- name: Phase 7 diagnostics workload complete
+  debug:
+    msg: "Phase 7 Diagnostics workload completed successfully."
+  when: not silent | bool

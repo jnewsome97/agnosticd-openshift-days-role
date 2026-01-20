@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  author: Debugging Role (Temporary)
+  description: Comprehensive diagnostics for Phase 7 workloads (Developer Experience)
+  license: Apache-2.0
+  min_ansible_version: "2.9"
+  platforms:
+    - name: OpenShift
+      versions:
+        - all
+
+dependencies: []

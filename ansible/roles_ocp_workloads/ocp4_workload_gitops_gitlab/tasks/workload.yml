@@ -1,4 +1,36 @@
 ---
+# ==============================================================================
+# DEBUG SECTION - Added for troubleshooting (TEMPORARY)
+# ==============================================================================
+- name: "DEBUG === GITOPS GITLAB WORKLOAD START ==="
+  debug:
+    msg: |
+      Starting ocp4_workload_gitops_gitlab deployment
+      GitOps Type: {{ ocp4_workload_gitops_gitlab_gitops_type | default('argocd') }}
+      Namespace: {{ ocp4_workload_gitops_gitlab_namespace | default('gitlab') }}
+
+- name: DEBUG - Check ArgoCD/GitOps prerequisites
+  shell: |
+    echo "=== OPENSHIFT-GITOPS NAMESPACE ==="
+    oc get all -n openshift-gitops 2>/dev/null | head -20 || echo "openshift-gitops namespace not found"
+    echo ""
+    echo "=== ARGOCD INSTANCES ==="
+    oc get argocd -A -o wide 2>/dev/null || echo "No ArgoCD instances found"
+    echo ""
+    echo "=== ARGOCD APPLICATION STATUS ==="
+    oc get applications.argoproj.io -A 2>/dev/null | head -10 || echo "No ArgoCD applications"
+    echo ""
+    echo "=== GITOPS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i gitops || echo "No GitOps CSVs"
+  register: debug_gitops_prereq
+
+- name: Display GitOps prerequisites
+  debug:
+    msg: "{{ debug_gitops_prereq.stdout_lines }}"
+# ==============================================================================
+# END DEBUG SECTION
+# ==============================================================================
+
 - name: Setting up workload
   debug:
     msg: "Setting up GitLab"
@@ -31,6 +63,37 @@
   loop: "{{ ocp4_workload_gitops_gitlab_acm_clusters }}"
   loop_control:
     loop_var: cluster
+
+# ==============================================================================
+# DEBUG SECTION - End of workload verification (TEMPORARY)
+# ==============================================================================
+- name: "DEBUG === GITOPS GITLAB WORKLOAD COMPLETE ==="
+  shell: |
+    echo "=== GITLAB ARGOCD APPLICATION ==="
+    oc get applications.argoproj.io -n openshift-gitops 2>/dev/null | grep -i gitlab || echo "No GitLab application found"
+    echo ""
+    echo "=== GITLAB APPLICATION DETAILS ==="
+    oc get applications.argoproj.io -n openshift-gitops -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | test("gitlab"; "i")) | "Name: \(.metadata.name), Health: \(.status.health.status // "unknown"), Sync: \(.status.sync.status // "unknown")"' 2>/dev/null || echo "No details"
+    echo ""
+    echo "=== GITLAB NAMESPACE ==="
+    oc get ns 2>/dev/null | grep -i gitlab || echo "No GitLab namespace (may still be syncing)"
+    echo ""
+    echo "=== GITLAB PODS (if namespace exists) ==="
+    for ns in $(oc get ns -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep -i gitlab); do
+      echo "--- $ns ---"
+      oc get pods -n $ns 2>/dev/null | head -10 || echo "No pods"
+    done
+    echo ""
+    echo "=== GITLAB ROUTES (if namespace exists) ==="
+    oc get routes -A 2>/dev/null | grep -i gitlab || echo "No GitLab routes yet"
+  register: debug_gitops_gitlab_complete
+
+- name: Display GitOps GitLab completion status
+  debug:
+    msg: "{{ debug_gitops_gitlab_complete.stdout_lines }}"
+# ==============================================================================
+# END DEBUG SECTION
+# ==============================================================================
 
 # Leave this as the last task in the playbook.
 # --------------------------------------------

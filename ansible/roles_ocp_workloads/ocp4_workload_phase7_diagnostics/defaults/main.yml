@@ -1,0 +1,34 @@
+---
+# ocp4_workload_phase7_diagnostics - Comprehensive debugging for Phase 7 workloads
+#
+# This is a TEMPORARY debugging workload that can be removed after troubleshooting.
+# It provides extensive diagnostic output for:
+#   - Minio (S3 storage)
+#   - GitOps/GitLab/ArgoCD
+#   - RHDH Orchestrator (Serverless, SonataFlow)
+#   - RHDH Bootstrap (Quay, Vault, External Secrets)
+#   - Red Hat Developer Hub (Backstage, GitLab Runner)
+#
+# To remove: Delete this role from infra_workloads in dev-ops-101.yaml
+#            and optionally delete this role directory
+
+become_override: false
+ocp_username: kubeadmin
+silent: false
+
+# Enable/disable specific diagnostic sections
+phase7_diag_minio: true
+phase7_diag_gitops: true
+phase7_diag_gitlab: true
+phase7_diag_argocd: true
+phase7_diag_orchestrator: true
+phase7_diag_serverless: true
+phase7_diag_quay: true
+phase7_diag_vault: true
+phase7_diag_external_secrets: true
+phase7_diag_backstage: true
+phase7_diag_gitlab_runner: true
+phase7_diag_operators: true
+phase7_diag_subscriptions: true
+phase7_diag_pods: true
+phase7_diag_events: true

@@ -1,0 +1,11 @@
+---
+# ocp4_workload_phase7_diagnostics - Entry point
+# TEMPORARY debugging role - can be removed after troubleshooting
+
+- name: Running ocp4_workload_phase7_diagnostics workload
+  ansible.builtin.debug:
+    msg: "Running Phase 7 Diagnostics workload"
+
+- name: Run workload tasks
+  ansible.builtin.include_tasks:
+    file: ./workload.yml
