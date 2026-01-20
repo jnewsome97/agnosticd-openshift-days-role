@@ -403,16 +403,58 @@
     echo "=== CERT-MANAGER NAMESPACE ==="
     oc get all -n cert-manager 2>/dev/null | head -15 || echo "cert-manager namespace not found"
     echo ""
-    echo "=== CERTIFICATES ==="
-    oc get certificate -A 2>/dev/null | head -10 || echo "No Certificates found"
+    echo "=== CERT-MANAGER PODS ==="
+    oc get pods -n cert-manager 2>/dev/null || echo "No pods in cert-manager namespace"
     echo ""
     echo "=== CLUSTER ISSUERS ==="
     oc get clusterissuer 2>/dev/null || echo "No ClusterIssuers found"
+    echo ""
+    echo "=== CLUSTER ISSUER DETAILS ==="
+    oc get clusterissuer -o yaml 2>/dev/null | grep -A20 "status:" | head -30 || echo "No ClusterIssuer status"
   register: debug_certmanager
 
 - name: Display cert-manager status
   debug:
     msg: "{{ debug_certmanager.stdout_lines }}"
+
+- name: DEBUG - Certificate issuance status (for troubleshooting Let's Encrypt)
+  shell: |
+    echo "=== ALL CERTIFICATES ==="
+    oc get certificate -A -o wide 2>/dev/null || echo "No Certificates found"
+    echo ""
+    echo "=== CERTIFICATE STATUS DETAILS ==="
+    for cert in $(oc get certificate -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+      ns=$(echo $cert | cut -d'/' -f1)
+      name=$(echo $cert | cut -d'/' -f2)
+      echo "--- Certificate: $ns/$name ---"
+      oc get certificate $name -n $ns -o jsonpath='{.status.conditions[*]}' 2>/dev/null | jq -r '.' 2>/dev/null || echo "No conditions"
+    done
+    echo ""
+    echo "=== CERTIFICATE REQUESTS ==="
+    oc get certificaterequest -A 2>/dev/null || echo "No CertificateRequests found"
+    echo ""
+    echo "=== CERTIFICATE REQUEST STATUS ==="
+    oc get certificaterequest -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.conditions[0].reason} - {.status.conditions[0].message}{"\n"}{end}' 2>/dev/null | head -20 || echo "No status"
+    echo ""
+    echo "=== ACME ORDERS ==="
+    oc get order -A 2>/dev/null || echo "No Orders found"
+    echo ""
+    echo "=== ORDER STATUS ==="
+    oc get order -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.state} - {.status.reason}{"\n"}{end}' 2>/dev/null | head -20 || echo "No order status"
+    echo ""
+    echo "=== ACME CHALLENGES ==="
+    oc get challenge -A 2>/dev/null || echo "No Challenges found"
+    echo ""
+    echo "=== CHALLENGE STATUS ==="
+    oc get challenge -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.state} - {.status.reason}{"\n"}{end}' 2>/dev/null | head -20 || echo "No challenge status"
+    echo ""
+    echo "=== CERT-MANAGER CONTROLLER LOGS (last 50 lines) ==="
+    oc logs -n cert-manager -l app.kubernetes.io/component=controller --tail=50 2>/dev/null || echo "No controller logs"
+  register: debug_certificates
+
+- name: Display certificate issuance status
+  debug:
+    msg: "{{ debug_certificates.stdout_lines }}"
 
 - name: DEBUG - OperatorGroups (detect conflicts)
   shell: |
