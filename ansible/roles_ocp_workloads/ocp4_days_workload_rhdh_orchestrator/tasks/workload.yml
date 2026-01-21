@@ -58,17 +58,28 @@
   args:
     chdir: /tmp
 
-- name: Install postgresql for sonataflow
+- name: Check if sonataflow-psql helm release already exists
   ansible.builtin.shell: |
-    git clone {{ ocp4_workload_rhdh_orchestrator_helm_chart }}
-    cd orchestrator-helm-chart/postgresql && git checkout {{ ocp4_workload_rhdh_orchestrator_helm_chart_version }}
-    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm list -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} | grep -q sonataflow-psql && echo "exists" || echo "not_found"
+  register: r_psql_helm_check
+
+- name: Install postgresql for sonataflow
+  when: r_psql_helm_check.stdout == "not_found"
+  ansible.builtin.shell: |
+    rm -rf /tmp/orchestrator-helm-chart
+    cd /tmp && git clone {{ ocp4_workload_rhdh_orchestrator_helm_chart }}
+    cd /tmp/orchestrator-helm-chart/postgresql && git checkout {{ ocp4_workload_rhdh_orchestrator_helm_chart_version }}
+    helm repo add bitnami https://charts.bitnami.com/bitnami || true
     helm install sonataflow-psql bitnami/postgresql --version {{
     ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_version }} -n {{
     ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} -f ./values.yaml --set-string=image.registry={{
     ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_registry }} --set-string=image.repository={{
     ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_repository }} --set-string=image.tag={{
     ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_tag }}
+
+- name: Display postgresql status
+  debug:
+    msg: "PostgreSQL helm release: {{ 'already installed' if r_psql_helm_check.stdout == 'exists' else 'installed' }}"
 
 # DAYS FIX: Changed from orchestrator-operator (doesn't exist) to logic-operator-rhel8
 - name: Install Orchestrator Operator
@@ -111,17 +122,24 @@
 
 - name: Add Orchestrator workflows repository
   ansible.builtin.shell: |
-    helm repo add orchestrator-workflows {{ ocp4_workload_rhdh_orchestrator_workflows.repo }}
+    helm repo add orchestrator-workflows {{ ocp4_workload_rhdh_orchestrator_workflows.repo }} || true
+
+- name: Check existing workflow helm releases
+  ansible.builtin.shell: |
+    helm list -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} --short 2>/dev/null || echo ""
+  register: r_existing_workflows
 
 - name: Install Orchestrator workflows
   ansible.builtin.shell: |
     helm install {{ item.name }} {{ item.location }} -n {{
     ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}
   loop: "{{ ocp4_workload_rhdh_orchestrator_workflows.chart }}"
+  when: item.name not in r_existing_workflows.stdout
   register: r_orch_workflow
-  until: r_orch_workflow is not failed
+  until: r_orch_workflow is not failed or r_orch_workflow is skipped
   retries: 120
   delay: 10
+  ignore_errors: true
 
 # ==============================================================================
 # DEBUG SECTION - End of workload verification (TEMPORARY)
