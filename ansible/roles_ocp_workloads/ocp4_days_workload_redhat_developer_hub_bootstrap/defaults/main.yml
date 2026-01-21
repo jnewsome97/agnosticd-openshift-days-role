@@ -47,6 +47,9 @@ ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_workflows:
 
 ocp4_workload_redhat_developer_hub_bootstrap_backstage_namespace: backstage
 
+# Skip Quay setup (useful when ODF is not available)
+ocp4_workload_redhat_developer_hub_bootstrap_skip_quay: "{{ ocp4_workload_redhat_developer_hub_skip_quay | default(false) | bool }}"
+
 ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_enabled: "{{ orchestrator_enabled | default('true') | bool }}"
 ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_channel: alpha
 ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_catalog_setup: true

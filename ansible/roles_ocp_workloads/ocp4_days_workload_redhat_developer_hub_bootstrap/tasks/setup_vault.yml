@@ -69,7 +69,18 @@
     oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace
     }} -- bash -c 'vault policy write rhdh-policy /tmp/rhdh-policy.hcl'
 
+- name: Check if kubernetes auth is already enabled
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }} -- vault auth list -format=json | grep -q '"kubernetes/"'
+  register: r_k8s_auth_check
+  ignore_errors: true
+
 - name: Enable kubernetes auth
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }} -- vault auth enable kubernetes
+  when: r_k8s_auth_check.rc != 0
+
+- name: Configure kubernetes auth
   ansible.builtin.shell: |
     export SA_SECRET_NAME=$(oc get secrets -n default --output=json \
     | jq -r '.items[].metadata | select(.name|startswith("vault-auth-secret")).name')
@@ -79,8 +90,6 @@
     --output 'jsonpath={.clusters[].cluster.certificate-authority-data}' | base64 --decode)
     export K8S_HOST=$(oc config view --raw --minify --flatten \
     --output 'jsonpath={.clusters[].cluster.server}')
-    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace
-    }} -- vault auth enable kubernetes
     oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace
     }} -- vault write auth/kubernetes/config \
     token_reviewer_jwt="$SA_JWT_TOKEN" \
@@ -106,6 +115,13 @@
   retries: 10
   delay: 5
 
+- name: Check if kv secrets engine is already enabled
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }} -- vault secrets list -format=json | grep -q '"kv/"'
+  register: r_kv_check
+  ignore_errors: true
+
 - name: Enable kv version 2
   ansible.builtin.shell: |
-    oc exec vault-0 -n vault -- vault secrets enable -version=2 kv
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }} -- vault secrets enable -version=2 kv
+  when: r_kv_check.rc != 0

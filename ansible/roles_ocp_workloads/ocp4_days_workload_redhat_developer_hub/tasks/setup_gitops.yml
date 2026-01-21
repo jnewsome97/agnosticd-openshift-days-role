@@ -2,27 +2,48 @@
 # DAYS FIX: Install OpenShift GitOps operator and create ArgoCD instance
 # This makes the RHDH workload self-contained without requiring a separate bootstrap
 
-- name: Check if ArgoCD already exists
+# Check multiple locations for ArgoCD - it could be in janus-argocd or openshift-gitops
+- name: Check if ArgoCD already exists in janus-argocd
   kubernetes.core.k8s_info:
     api_version: argoproj.io/v1alpha1
     kind: ArgoCD
-    name: argocd
     namespace: janus-argocd
-  register: r_argocd_check
+  register: r_argocd_janus_check
   ignore_errors: true
 
-- name: Set argocd_already_installed fact
+- name: Check if ArgoCD already exists in openshift-gitops
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: ArgoCD
+    namespace: openshift-gitops
+  register: r_argocd_gitops_check
+  ignore_errors: true
+
+# DAYS FIX: Check if GitOps operator CSV is already installed by checking for Succeeded CSV
+- name: Check if GitOps operator CSV already exists
+  shell: |
+    oc get csv -n openshift-gitops 2>/dev/null | grep -i "openshift-gitops-operator" | grep -i "Succeeded" || true
+  register: r_gitops_csv_check
+  ignore_errors: true
+
+- name: Set installation facts
   ansible.builtin.set_fact:
-    argocd_already_installed: "{{ r_argocd_check.resources | default([]) | length > 0 }}"
+    janus_argocd_exists: "{{ r_argocd_janus_check.resources | default([]) | length > 0 }}"
+    gitops_argocd_exists: "{{ r_argocd_gitops_check.resources | default([]) | length > 0 }}"
+    gitops_operator_installed: "{{ r_gitops_csv_check.stdout | length > 0 }}"
 
 - name: Display ArgoCD installation status
   debug:
-    msg: "ArgoCD already installed: {{ argocd_already_installed }}"
+    msg: |
+      GitOps Operator CSV installed: {{ gitops_operator_installed }}
+      ArgoCD in janus-argocd: {{ janus_argocd_exists }}
+      ArgoCD in openshift-gitops: {{ gitops_argocd_exists }}
 
-- name: Install OpenShift GitOps and ArgoCD
-  when: not argocd_already_installed
+# Install GitOps operator only if CSV doesn't exist
+- name: Install OpenShift GitOps Operator
+  when: not gitops_operator_installed
   block:
-    - name: Install OpenShift GitOps Operator
+    - name: Install GitOps Operator via OLM
       ansible.builtin.include_role:
         name: install_operator
       vars:
@@ -46,6 +67,15 @@
         - r_argocd_crd.resources is defined
         - r_argocd_crd.resources | length > 0
 
+- name: Skip GitOps Operator install - already installed
+  when: gitops_operator_installed
+  debug:
+    msg: "GitOps operator already installed, skipping operator installation"
+
+# Create ArgoCD in janus-argocd if it doesn't exist there
+- name: Create ArgoCD in janus-argocd namespace
+  when: not janus_argocd_exists
+  block:
     - name: Create janus-argocd namespace
       kubernetes.core.k8s:
         state: present
@@ -55,7 +85,7 @@
           metadata:
             name: janus-argocd
 
-    - name: Create ArgoCD instance
+    - name: Create ArgoCD instance in janus-argocd
       kubernetes.core.k8s:
         state: present
         definition:
@@ -88,22 +118,42 @@
                 - TaskRun
                 - PipelineRun
 
-- name: Wait for ArgoCD to be ready
+    - name: Wait for janus-argocd ArgoCD to be ready
+      kubernetes.core.k8s_info:
+        api_version: argoproj.io/v1alpha1
+        kind: ArgoCD
+        name: argocd
+        namespace: janus-argocd
+      register: r_argocd_new
+      retries: 60
+      delay: 10
+      until:
+        - r_argocd_new.resources is defined
+        - r_argocd_new.resources | length > 0
+        - r_argocd_new.resources[0].status is defined
+        - r_argocd_new.resources[0].status.phase is defined
+        - r_argocd_new.resources[0].status.phase == 'Available'
+
+- name: ArgoCD in janus-argocd already exists
+  when: janus_argocd_exists
+  debug:
+    msg: "ArgoCD already exists in janus-argocd namespace"
+
+# If we have an ArgoCD available (either just created or pre-existing), verify it's ready
+- name: Verify ArgoCD is available
   kubernetes.core.k8s_info:
     api_version: argoproj.io/v1alpha1
     kind: ArgoCD
     name: argocd
     namespace: janus-argocd
-  register: r_argocd
+  register: r_argocd_final
   retries: 60
   delay: 10
   until:
-    - r_argocd.resources is defined
-    - r_argocd.resources | length > 0
-    - r_argocd.resources[0].status is defined
-    - r_argocd.resources[0].status.phase is defined
-    - r_argocd.resources[0].status.phase == 'Available'
+    - r_argocd_final.resources is defined
+    - r_argocd_final.resources | length > 0
+  when: janus_argocd_exists
 
 - name: Display ArgoCD status
   debug:
-    msg: "ArgoCD is {{ r_argocd.resources[0].status.phase | default('Unknown') }}"
+    msg: "ArgoCD in janus-argocd is ready"

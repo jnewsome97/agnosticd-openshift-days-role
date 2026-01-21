@@ -2,7 +2,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: vault
-  namespace: openshift-gitops
+  namespace: janus-argocd
 spec:
   destination:
     namespace: {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }}

@@ -1,6 +1,23 @@
 ---
 # DAYS FIX: Install RHSSO operator (was expected to be pre-installed by bootstrap)
+# Added idempotency check to prevent conflicts when operator is already installed
+
+- name: Check if RHSSO operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "rhsso-operator" | grep -i "Succeeded" || true
+  register: r_rhsso_csv_check
+  ignore_errors: true
+
+- name: Set rhsso_operator_installed fact
+  ansible.builtin.set_fact:
+    rhsso_operator_installed: "{{ r_rhsso_csv_check.stdout | length > 0 }}"
+
+- name: Display RHSSO operator status
+  debug:
+    msg: "RHSSO operator installed: {{ rhsso_operator_installed }}"
+
 - name: Install RHSSO Operator
+  when: not rhsso_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -13,6 +30,11 @@
     install_operator_csv_nameprefix: rhsso-operator
     install_operator_manage_namespaces:
       - "{{ ocp4_workload_redhat_developer_hub_keycloak_namespace }}"
+
+- name: Skip RHSSO operator install - already installed
+  when: rhsso_operator_installed
+  debug:
+    msg: "RHSSO operator already installed, skipping operator installation"
 
 - name: Wait for RHSSO CRDs to be available
   kubernetes.core.k8s_info:
