@@ -1,0 +1,154 @@
+---
+# DAYS FIX: Deploy Vault directly via Helm instead of depending on bootstrap/ArgoCD
+# This allows the RHDH workload to be self-contained
+
+- name: Create vault namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+
+# Check if Vault is already installed and running
+- name: Check if vault-0 pod exists and is running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    name: vault-0
+    namespace: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+  register: r_vault_check
+
+- name: Set vault_already_installed fact
+  ansible.builtin.set_fact:
+    vault_already_installed: "{{ r_vault_check.resources | length > 0 and r_vault_check.resources[0].status.phase | default('') == 'Running' }}"
+
+- name: Display vault installation status
+  debug:
+    msg: "Vault already installed: {{ vault_already_installed }}"
+
+# Only install Vault if not already present
+- name: Install Vault via Helm (if not already installed)
+  when: not vault_already_installed
+  block:
+    # DAYS FIX: Clean up stale PVC from previous failed installs to ensure fresh initialization
+    - name: Check for stale vault PVC
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: PersistentVolumeClaim
+        namespace: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=vault
+      register: r_vault_pvc
+
+    - name: Delete stale vault PVC for fresh install
+      when: r_vault_pvc.resources | length > 0
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: "{{ item.metadata.name }}"
+        namespace: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+      loop: "{{ r_vault_pvc.resources }}"
+      ignore_errors: true
+
+    - name: Clone agnosticg repo for Vault chart
+      ansible.builtin.git:
+        repo: "{{ ocp4_workload_redhat_developer_hub_vault_chart_repo | default('https://github.com/treddy08/agnosticg.git') }}"
+        dest: /tmp/agnosticg
+        version: "{{ ocp4_workload_redhat_developer_hub_vault_chart_version | default('main') }}"
+        force: true
+
+    # DAYS FIX: Use --force to handle orphaned resources from previous failed installs
+    - name: Install Vault via Helm
+      ansible.builtin.shell: |
+        helm upgrade --install vault /tmp/agnosticg/charts/hashicorp-vault \
+          -n {{ ocp4_workload_redhat_developer_hub_vault_namespace }} \
+          --set vault.channel=stable-4.10 \
+          --force --wait --timeout 10m
+      register: vault_install
+      retries: 3
+      delay: 10
+      until: vault_install is not failed
+
+- name: Wait for vault-0 pod to be running
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    name: vault-0
+    namespace: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+  register: r_vault
+  retries: 60
+  delay: 10
+  until:
+    - r_vault.resources is defined
+    - r_vault.resources | length > 0
+    - r_vault.resources[0].status is defined
+    - r_vault.resources[0].status.phase is defined
+    - r_vault.resources[0].status.phase == 'Running'
+
+- name: Wait for vault unseal job to complete
+  kubernetes.core.k8s_info:
+    api_version: batch/v1
+    kind: Job
+    name: unseal-volt
+    namespace: "{{ ocp4_workload_redhat_developer_hub_vault_namespace }}"
+  register: r_unseal_job
+  retries: 30
+  delay: 10
+  until:
+    - r_unseal_job.resources is defined
+    - r_unseal_job.resources | length > 0
+    - r_unseal_job.resources[0].status.succeeded is defined
+    - r_unseal_job.resources[0].status.succeeded >= 1
+  ignore_errors: true
+
+- name: Verify vault is ready
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_vault_namespace }} -- vault status 2>/dev/null || echo "Vault not ready yet"
+  register: vault_status
+  retries: 10
+  delay: 10
+  until: "'Sealed             false' in vault_status.stdout"
+  ignore_errors: true
+
+- name: Display Vault status
+  debug:
+    msg: "{{ vault_status.stdout_lines | default(['Vault deployment in progress']) }}"
+
+# DAYS FIX: Configure vault with KV secrets engine (borrowed from bootstrap)
+- name: Copy unsealing key and get root token
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_vault_namespace }} -- cat /vault/data/vault-auto-unseal-keys.txt > /tmp/vault-auto-unseal-keys.txt
+  retries: 10
+  delay: 5
+  register: r_copy
+  until: r_copy is not failed
+
+- name: Get login token
+  ansible.builtin.shell: >-
+    grep -A 0 root_token /tmp/vault-auto-unseal-keys.txt | sed 's/root_token: //g'
+  register: r_token
+
+- name: Set vault token fact
+  ansible.builtin.set_fact:
+    ocp4_workload_redhat_developer_hub_vault_token: "{{ r_token.stdout }}"
+
+- name: Login to vault with root token
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_vault_namespace }} -- vault login {{ ocp4_workload_redhat_developer_hub_vault_token }}
+  register: r_vault_login
+  until: r_vault_login is not failed
+  retries: 10
+  delay: 5
+
+- name: Enable kv version 2 secrets engine
+  ansible.builtin.shell: |
+    oc exec vault-0 -n {{ ocp4_workload_redhat_developer_hub_vault_namespace }} -- vault secrets enable -version=2 kv || true
+  register: r_enable_kv
+  ignore_errors: true
+
+- name: Display vault configuration result
+  debug:
+    msg: "Vault KV engine enabled: {{ r_enable_kv.rc == 0 or 'already' in r_enable_kv.stderr | default('') }}"

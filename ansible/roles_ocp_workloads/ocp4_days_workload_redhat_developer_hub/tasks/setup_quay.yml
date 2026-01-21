@@ -1,0 +1,197 @@
+---
+# DAYS FIX: Install Quay operator and create QuayRegistry
+# This makes the RHDH workload self-contained
+
+- name: Check if Quay is already installed
+  kubernetes.core.k8s_info:
+    api_version: quay.redhat.com/v1
+    kind: QuayRegistry
+    name: quay
+    namespace: quay-enterprise
+  register: r_quay_check
+  ignore_errors: true
+
+- name: Set quay_already_installed fact
+  ansible.builtin.set_fact:
+    quay_already_installed: "{{ r_quay_check.resources | default([]) | length > 0 }}"
+
+- name: Display Quay installation status
+  debug:
+    msg: "Quay already installed: {{ quay_already_installed }}"
+
+- name: Install Quay
+  when: not quay_already_installed
+  block:
+    # Check for ODF/NooBaa - required for Quay object storage
+    - name: Check for NooBaa BucketClass (ODF dependency)
+      kubernetes.core.k8s_info:
+        api_version: noobaa.io/v1alpha1
+        kind: BucketClass
+        namespace: openshift-storage
+      register: r_bucket_class
+      ignore_errors: true
+
+    - name: Set odf_available fact
+      ansible.builtin.set_fact:
+        odf_available: "{{ r_bucket_class.resources | default([]) | length > 0 }}"
+
+    - name: Display ODF status
+      ansible.builtin.debug:
+        msg: "ODF/NooBaa available: {{ odf_available }}"
+
+    - name: Fail if ODF is not available
+      when: not odf_available
+      ansible.builtin.fail:
+        msg: |
+          Quay requires OpenShift Data Foundation (ODF) with NooBaa for object storage.
+          Please install ODF first, or set ocp4_workload_redhat_developer_hub_skip_quay: true to skip Quay.
+
+    - name: Install Quay Operator
+      ansible.builtin.include_role:
+        name: install_operator
+      vars:
+        install_operator_action: install
+        install_operator_name: quay-operator
+        install_operator_namespace: openshift-operators
+        install_operator_channel: stable-3.12
+        install_operator_catalog: redhat-operators
+        install_operator_automatic_install_plan_approval: true
+        install_operator_csv_nameprefix: quay-operator
+
+    - name: Wait for Quay CRDs to be available
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: quayregistries.quay.redhat.com
+      register: r_quay_crd
+      retries: 30
+      delay: 10
+      until:
+        - r_quay_crd.resources is defined
+        - r_quay_crd.resources | length > 0
+
+    - name: Create quay-enterprise namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: quay-enterprise
+
+    - name: Determine cluster base domain for Quay route
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Ingress
+        name: cluster
+      register: r_ingress_config
+
+    - name: Set Quay route hostname
+      ansible.builtin.set_fact:
+        quay_route_hostname: "quay-{{ guid | default('workshop') }}.{{ r_ingress_config.resources[0].spec.domain }}"
+
+    - name: Create QuayRegistry instance
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: quay.redhat.com/v1
+          kind: QuayRegistry
+          metadata:
+            name: quay
+            namespace: quay-enterprise
+          spec:
+            components:
+              - kind: clair
+                managed: true
+              - kind: postgres
+                managed: true
+              - kind: objectstorage
+                managed: true
+              - kind: redis
+                managed: true
+              - kind: horizontalpodautoscaler
+                managed: true
+              - kind: route
+                managed: true
+              - kind: mirror
+                managed: true
+              - kind: monitoring
+                managed: true
+              - kind: tls
+                managed: true
+              - kind: quay
+                managed: true
+              - kind: clairpostgres
+                managed: true
+
+    - name: Wait for Quay Registry to be available
+      kubernetes.core.k8s_info:
+        api_version: quay.redhat.com/v1
+        kind: QuayRegistry
+        name: quay
+        namespace: quay-enterprise
+      register: r_quay_registry
+      retries: 120
+      delay: 10
+      until:
+        - r_quay_registry.resources is defined
+        - r_quay_registry.resources | length > 0
+        - r_quay_registry.resources[0].status is defined
+        - r_quay_registry.resources[0].status.currentVersion is defined
+        - r_quay_registry.resources[0].status.currentVersion | length > 0
+
+    - name: Wait for Quay API to be available
+      ansible.builtin.uri:
+        url: "{{ r_quay_registry.resources[0].status.registryEndpoint }}/api/v1/discovery"
+        method: GET
+        validate_certs: false
+      register: r_quay_api
+      until: r_quay_api.status == 200 or r_quay_api.status == 403
+      retries: 60
+      delay: 10
+
+    # Note: Operator-deployed Quay doesn't support /api/v1/user/initialize endpoint
+    # The first user must be created via the Quay UI
+    # For Backstage integration, Quay provides anonymous read access by default
+    - name: Display Quay manual setup instructions
+      ansible.builtin.debug:
+        msg: |
+          Quay is deployed and available.
+          To create the first admin user, visit the Quay UI at:
+          {{ r_quay_registry.resources[0].status.registryEndpoint }}
+
+          Click "Create Account" to register the first user.
+          The first registered user will be a superuser.
+
+    - name: Create placeholder quay-admin-token secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: quay-admin-token
+            namespace: quay-enterprise
+          type: Opaque
+          stringData:
+            token: ""
+            username: ""
+            password: ""
+            note: "Admin user must be created via Quay UI. Update this secret with the OAuth token after creation."
+
+- name: Get Quay registry info
+  kubernetes.core.k8s_info:
+    api_version: quay.redhat.com/v1
+    kind: QuayRegistry
+    name: quay
+    namespace: quay-enterprise
+  register: r_quay_final
+
+- name: Set Quay host fact
+  ansible.builtin.set_fact:
+    ocp4_workload_redhat_developer_hub_quay_host: "{{ r_quay_final.resources[0].status.registryEndpoint | regex_replace('^https?://', '') }}"
+  when: r_quay_final.resources | length > 0
+
+- name: Display Quay status
+  debug:
+    msg: "Quay is available at {{ r_quay_final.resources[0].status.registryEndpoint | default('Not ready') }}"

@@ -1,0 +1,12 @@
+---
+# DAYS FIX: These template files contain Backstage ${{ }} syntax that conflicts with Jinja2
+# Since they don't contain Ansible variables, we just skip processing them
+# The files are already in place from the git clone
+- name: Verify template file exists {{ folder }}/{{ template_file }}
+  ansible.builtin.stat:
+    path: "{{ folder }}/{{ template_file }}"
+  register: r_template_file
+
+- name: Display template file status
+  ansible.builtin.debug:
+    msg: "Template file {{ folder }}/{{ template_file }} exists: {{ r_template_file.stat.exists }}"

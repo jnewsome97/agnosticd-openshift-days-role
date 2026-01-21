@@ -1,0 +1,131 @@
+---
+# DAYS FIX: Create gitops group and janus-idp-gitops project if they don't exist
+
+- name: Check if GitLab group gitops exists
+  ansible.builtin.uri:
+    url: "https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/groups?search=gitops"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: r_gitops_group_search
+
+- name: Create gitops group if it doesn't exist
+  when: r_gitops_group_search.json | selectattr('path', 'equalto', 'gitops') | list | length == 0
+  ansible.builtin.uri:
+    url: "https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/groups"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    body:
+      name: gitops
+      path: gitops
+      visibility: public
+    body_format: json
+    validate_certs: false
+    status_code: [201]
+  register: r_gitops_group_create
+
+- name: Get gitops group ID
+  ansible.builtin.set_fact:
+    gitops_group_id: "{{ (r_gitops_group_search.json | selectattr('path', 'equalto', 'gitops') | list | first).id | default(r_gitops_group_create.json.id | default('')) }}"
+
+- name: Check if project janus-idp-gitops exists in gitops group
+  ansible.builtin.uri:
+    url: "https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects/gitops%2Fjanus-idp-gitops"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: r_gitops_project_check
+
+- name: Import janus-idp-gitops project from GitHub
+  when: r_gitops_project_check.status == 404
+  ansible.builtin.uri:
+    url: "https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects"
+    method: POST
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    body:
+      name: janus-idp-gitops
+      path: janus-idp-gitops
+      namespace_id: "{{ gitops_group_id }}"
+      visibility: public
+      import_url: "{{ ocp4_workload_redhat_developer_hub_janus_bootstrap_repo }}"
+    body_format: json
+    validate_certs: false
+    status_code: [201]
+  register: r_gitops_project_import
+
+- name: Wait for project import to complete
+  when: r_gitops_project_check.status == 404
+  ansible.builtin.uri:
+    url: "https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects/gitops%2Fjanus-idp-gitops"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: r_gitops_project_status
+  retries: 30
+  delay: 10
+  until:
+    - r_gitops_project_status.json is defined
+    - r_gitops_project_status.json.import_status is not defined or r_gitops_project_status.json.import_status in ['finished', 'none']
+
+# DAYS FIX: URL-encode password to handle special characters like @ and !
+- name: Build git repo url
+  ansible.builtin.set_fact:
+    ocp4_workload_redhat_developer_hub_backstage_helm_repo:
+      https://{{ ocp4_workload_redhat_developer_hub_gitlab_root_user }}:{{
+      ocp4_workload_redhat_developer_hub_gitlab_root_password | urlencode }}@{{
+      ocp4_workload_redhat_developer_hub_gitlab_host }}/gitops/janus-idp-gitops
+
+# DAYS FIX: Use /tmp instead of ansible_user home directory for portability
+- name: Remove older repo folders
+  ansible.builtin.file:
+    path: "/tmp/rhdh-backstage/janus-idp-gitops"
+    state: absent
+
+- name: Ensure backstage directory exists
+  ansible.builtin.file:
+    path: "/tmp/rhdh-backstage"
+    state: directory
+    mode: '0755'
+
+- name: Clone janus-idp-gitops
+  ansible.builtin.git:
+    accept_hostkey: true
+    force: true
+    repo: "{{ ocp4_workload_redhat_developer_hub_backstage_helm_repo }}"
+    dest: "/tmp/rhdh-backstage/janus-idp-gitops"
+    version: "main"
+  environment:
+    GIT_SSL_NO_VERIFY: "true"
+
+- name: Apply template values to location template
+  ansible.builtin.include_tasks: fetch_and_apply_template.yml
+  vars:
+    folder: /tmp/rhdh-backstage/janus-idp-gitops/charts/backstage
+    template_file: backstage-values.yaml
+
+- name: Add new files to the repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-backstage/janus-idp-gitops"
+    cmd: "git add ."
+  ignore_errors: true
+
+- name: Commit changes to the repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-backstage/janus-idp-gitops"
+    cmd: >-
+      git commit -a -m 'Updates for starting scenario.'
+  ignore_errors: true
+
+- name: Push all changes back to the project repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-backstage/janus-idp-gitops"
+    cmd: >-
+      git push {{ ocp4_workload_redhat_developer_hub_backstage_helm_repo }}

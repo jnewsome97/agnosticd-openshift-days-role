@@ -1,0 +1,149 @@
+---
+# DAYS FIX: Create GitLab group if it doesn't exist
+- name: Check if GitLab group {{ location.group }} exists
+  ansible.builtin.uri:
+    url: https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/groups?search={{ location.group }}
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: 200
+  register: r_group_search
+
+- name: Create GitLab group {{ location.group }}
+  when: r_group_search.json | selectattr('path', 'equalto', location.group) | list | length == 0
+  ansible.builtin.uri:
+    url: https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/groups
+    method: POST
+    body_format: json
+    body:
+      name: "{{ location.group }}"
+      path: "{{ location.group }}"
+      visibility: public
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [201, 400]
+  register: r_create_group
+
+- name: Get group ID for {{ location.group }}
+  ansible.builtin.set_fact:
+    template_group_id: "{{ (r_group_search.json | selectattr('path', 'equalto', location.group) | first).id | default(r_create_group.json.id | default('')) }}"
+
+# DAYS FIX: Check if project exists and create/import from GitHub if not
+- name: Check if project {{ location.project }} exists in {{ location.group }}
+  ansible.builtin.uri:
+    url: https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects/{{ location.group }}%2F{{ location.project }}
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [200, 404]
+  register: r_project_check
+
+- name: Import project {{ location.project }} from GitHub
+  when: r_project_check.status == 404
+  ansible.builtin.uri:
+    url: https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects
+    method: POST
+    body_format: json
+    body:
+      name: "{{ location.project }}"
+      path: "{{ location.project }}"
+      namespace_id: "{{ template_group_id }}"
+      visibility: public
+      import_url: "https://github.com/{{ location.group }}/{{ location.project }}.git"
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: [201, 400]
+  register: r_import_project
+
+- name: Wait for project import to complete
+  when: r_project_check.status == 404
+  ansible.builtin.uri:
+    url: https://{{ ocp4_workload_redhat_developer_hub_gitlab_host }}/api/v4/projects/{{ location.group }}%2F{{ location.project }}
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ ocp4_workload_redhat_developer_hub_gitlab_root_token }}"
+    validate_certs: false
+    status_code: 200
+  register: r_project_status
+  retries: 30
+  delay: 10
+  until: r_project_status.json.import_status | default('finished') in ['finished', 'none']
+
+# DAYS FIX: URL-encode password to handle special characters like @ and !
+- name: Build git repo url
+  ansible.builtin.set_fact:
+    ocp4_workload_redhat_developer_hub_template_repo_url:
+      https://{{ ocp4_workload_redhat_developer_hub_gitlab_root_user }}:{{
+      ocp4_workload_redhat_developer_hub_gitlab_root_password | urlencode }}@{{
+      ocp4_workload_redhat_developer_hub_gitlab_host }}/{{
+      location.group }}/{{ location.project }}
+
+# DAYS FIX: Use /tmp instead of ansible_user home directory for portability
+- name: Remove older repo folders
+  ansible.builtin.file:
+    path: "/tmp/rhdh-templates/{{ location.project }}"
+    state: absent
+
+- name: Ensure template directory exists
+  ansible.builtin.file:
+    path: "/tmp/rhdh-templates"
+    state: directory
+    mode: '0755'
+
+- name: Clone {{ location.project }}
+  ansible.builtin.git:
+    accept_hostkey: true
+    force: true
+    repo: "{{ ocp4_workload_redhat_developer_hub_template_repo_url }}"
+    dest: "/tmp/rhdh-templates/{{ location.project }}"
+    version: "{{ location.branch }}"
+  environment:
+    GIT_SSL_NO_VERIFY: "true"
+
+- name: Apply template values to location template
+  ansible.builtin.include_tasks: fetch_and_apply_template.yml
+  loop:
+  - "{{ location.file }}"
+  loop_control:
+    loop_var: template_file
+  vars:
+    folder: "/tmp/rhdh-templates/{{ location.project }}"
+    gitlab_host: "{{ ocp4_workload_redhat_developer_hub_gitlab_host }}"
+    gitlab_group: "{{ location.group }}"
+    gitlab_user_count: "{{ ocp4_workload_redhat_developer_hub_users_count }}"
+
+- name: Apply template values to scaffolding templates
+  when: location.templates is defined
+  ansible.builtin.include_tasks: fetch_and_apply_template.yml
+  loop: "{{ location.templates | default([]) }}"
+  loop_control:
+    loop_var: template_file
+  vars:
+    folder: "/tmp/rhdh-templates/{{ location.project }}"
+    gitlab_host: "{{ ocp4_workload_redhat_developer_hub_gitlab_host }}"
+    gitlab_destination_group: development
+    cluster_subdomain: ".{{ ocp4_workload_redhat_developer_hub_apps_domain }}"
+    quay_host: "{{ ocp4_workload_redhat_developer_hub_quay_host }}"
+
+- name: Add new files to the repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-templates/{{ location.project }}"
+    cmd: "git add ."
+  ignore_errors: true
+
+- name: Commit changes to the repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-templates/{{ location.project }}"
+    cmd: >-
+      git commit -a -m 'Updates for starting scenario.'
+  ignore_errors: true
+
+- name: Push all changes back to the project repository
+  ansible.builtin.command:
+    chdir: "/tmp/rhdh-templates/{{ location.project }}"
+    cmd: >-
+      git push {{ ocp4_workload_redhat_developer_hub_template_repo_url }}

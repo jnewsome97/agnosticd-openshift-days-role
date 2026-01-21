@@ -1,0 +1,35 @@
+# DAYS FIX: Replaced Orchestrator CR (from non-existent orchestrator-operator)
+# with SonataFlowPlatform CR (from logic-operator-rhel8)
+apiVersion: sonataflow.org/v1alpha08
+kind: SonataFlowPlatform
+metadata:
+  name: sonataflow-platform
+  namespace: {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}
+spec:
+  services:
+    dataIndex:
+      enabled: true
+      persistence:
+        postgresql:
+          secretRef:
+            name: sonataflow-psql-postgresql
+            userKey: postgres-username
+            passwordKey: postgres-password
+          serviceRef:
+            name: sonataflow-psql-postgresql
+            namespace: {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}
+            databaseName: sonataflow
+            port: 5432
+    jobService:
+      enabled: true
+      persistence:
+        postgresql:
+          secretRef:
+            name: sonataflow-psql-postgresql
+            userKey: postgres-username
+            passwordKey: postgres-password
+          serviceRef:
+            name: sonataflow-psql-postgresql
+            namespace: {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}
+            databaseName: sonataflow
+            port: 5432

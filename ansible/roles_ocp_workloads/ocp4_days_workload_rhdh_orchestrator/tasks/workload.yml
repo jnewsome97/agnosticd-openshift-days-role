@@ -1,0 +1,161 @@
+---
+# ==============================================================================
+# DEBUG SECTION - Added for troubleshooting (TEMPORARY)
+# ==============================================================================
+- name: "DEBUG === RHDH ORCHESTRATOR WORKLOAD START ==="
+  debug:
+    msg: |
+      Starting ocp4_workload_rhdh_orchestrator deployment
+      SonataFlow Namespace: {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace | default('sonataflow-infra') }}
+      Helm Chart Version: {{ ocp4_workload_rhdh_orchestrator_helm_chart_version | default('not set') }}
+      Serverless Enabled: {{ ocp4_workload_rhdh_orchestrator_serverless_enabled | default(true) }}
+
+- name: DEBUG - Check Serverless/Knative prerequisites
+  shell: |
+    echo "=== SERVERLESS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i serverless || echo "No Serverless CSVs (will be installed)"
+    echo ""
+    echo "=== KNATIVE SERVING ==="
+    oc get knativeserving -A -o wide 2>/dev/null || echo "No KnativeServing"
+    echo ""
+    echo "=== KNATIVE EVENTING ==="
+    oc get knativeeventing -A -o wide 2>/dev/null || echo "No KnativeEventing"
+    echo ""
+    echo "=== ORCHESTRATOR OPERATOR (pre-check) ==="
+    oc get csv -A 2>/dev/null | grep -i orchestrator || echo "Not installed yet"
+    echo ""
+    echo "=== SONATAFLOW NAMESPACE (pre-check) ==="
+    oc get ns sonataflow-infra 2>/dev/null && echo "Namespace exists" || echo "Will be created"
+  register: debug_orchestrator_prereq
+
+- name: Display Orchestrator prerequisites
+  debug:
+    msg: "{{ debug_orchestrator_prereq.stdout_lines }}"
+# ==============================================================================
+# END DEBUG SECTION
+# ==============================================================================
+
+- name: Create sonataflow pre-requisites
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', item) | from_yaml }}"
+  loop:
+  - templates/namespace-sonataflow.yml.j2
+  - templates/secret-sonataflow-pgsql.yml.j2
+
+- name: Check if helm is installed
+  ansible.builtin.command: command -v helm
+  register: git_helm
+  ignore_errors: true
+
+- name: Install helm if not present
+  when: git_helm.rc != 0
+  become: true
+  ansible.builtin.shell: |
+    curl -LO https://get.helm.sh/helm-{{ ocp4_workload_rhdh_orchestrator_helm_cli_version }}-linux-amd64.tar.gz
+    tar -zxvf helm-{{ ocp4_workload_rhdh_orchestrator_helm_cli_version }}-linux-amd64.tar.gz
+    mv linux-amd64/helm /usr/local/bin/helm
+  args:
+    chdir: /tmp
+
+- name: Install postgresql for sonataflow
+  ansible.builtin.shell: |
+    git clone {{ ocp4_workload_rhdh_orchestrator_helm_chart }}
+    cd orchestrator-helm-chart/postgresql && git checkout {{ ocp4_workload_rhdh_orchestrator_helm_chart_version }}
+    helm repo add bitnami https://charts.bitnami.com/bitnami
+    helm install sonataflow-psql bitnami/postgresql --version {{
+    ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_version }} -n {{
+    ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} -f ./values.yaml --set-string=image.registry={{
+    ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_registry }} --set-string=image.repository={{
+    ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_repository }} --set-string=image.tag={{
+    ocp4_workload_rhdh_orchestrator_sonataflow_pgsql_image_tag }}
+
+# DAYS FIX: Changed from orchestrator-operator (doesn't exist) to logic-operator-rhel8
+- name: Install Orchestrator Operator
+  block:
+  - name: Install Orchestrator Operator
+    ansible.builtin.include_role:
+      name: install_operator
+    vars:
+      install_operator_action: install
+      install_operator_name: logic-operator-rhel8
+      install_operator_namespace: openshift-operators
+      install_operator_channel: alpha
+      install_operator_catalog: redhat-operators
+      install_operator_packagemanifest_name: logic-operator-rhel8
+      install_operator_automatic_install_plan_approval: true
+      install_operator_csv_nameprefix: logic-operator-rhel8
+
+# DAYS FIX: Using SonataFlowPlatform CR instead of Orchestrator CR
+# (logic-operator-rhel8 provides sonataflow.org CRDs, not rhdh.redhat.com)
+- name: Install SonataFlow Platform
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'sonataflow-platform.yml.j2') | from_yaml }}"
+
+- name: Check if sonataflow-platform-data-index-service deployment is ready
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    api_version: apps/v1
+    namespace: "{{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}"
+    name: sonataflow-platform-data-index-service
+  register: r_index_svc
+  retries: 60
+  delay: 10
+  until:
+  - r_index_svc.resources is defined
+  - r_index_svc.resources | length > 0
+  - r_index_svc.resources[0].status is defined
+  - r_index_svc.resources[0].status.readyReplicas is defined
+  - r_index_svc.resources[0].status.readyReplicas > 0
+
+- name: Add Orchestrator workflows repository
+  ansible.builtin.shell: |
+    helm repo add orchestrator-workflows {{ ocp4_workload_rhdh_orchestrator_workflows.repo }}
+
+- name: Install Orchestrator workflows
+  ansible.builtin.shell: |
+    helm install {{ item.name }} {{ item.location }} -n {{
+    ocp4_workload_rhdh_orchestrator_sonataflow_namespace }}
+  loop: "{{ ocp4_workload_rhdh_orchestrator_workflows.chart }}"
+  register: r_orch_workflow
+  until: r_orch_workflow is not failed
+  retries: 120
+  delay: 10
+
+# ==============================================================================
+# DEBUG SECTION - End of workload verification (TEMPORARY)
+# ==============================================================================
+- name: "DEBUG === RHDH ORCHESTRATOR WORKLOAD COMPLETE ==="
+  shell: |
+    echo "=== ORCHESTRATOR OPERATOR CSV ==="
+    oc get csv -A 2>/dev/null | grep -i orchestrator || echo "No Orchestrator CSV"
+    echo ""
+    echo "=== SONATAFLOW NAMESPACE ==="
+    oc get all -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} 2>/dev/null | head -30 || echo "Namespace not found"
+    echo ""
+    echo "=== SONATAFLOW PODS ==="
+    oc get pods -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} -o wide 2>/dev/null || echo "No pods"
+    echo ""
+    echo "=== SONATAFLOW PLATFORM ==="
+    oc get sonataflowplatform -A 2>/dev/null || echo "No SonataFlowPlatform"
+    echo ""
+    echo "=== SONATAFLOW WORKFLOWS ==="
+    oc get sonataflow -A 2>/dev/null || echo "No SonataFlow workflows"
+    echo ""
+    echo "=== POSTGRESQL POD STATUS ==="
+    oc get pods -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} -l app.kubernetes.io/name=postgresql 2>/dev/null || echo "No PostgreSQL pods"
+    echo ""
+    echo "=== HELM RELEASES ==="
+    helm list -n {{ ocp4_workload_rhdh_orchestrator_sonataflow_namespace }} 2>/dev/null || echo "No helm releases"
+    echo ""
+    echo "=== KNATIVE SERVING STATUS ==="
+    oc get knativeserving -A -o jsonpath='{range .items[*]}Name: {.metadata.name}, Ready: {.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null || echo "No KnativeServing"
+  register: debug_orchestrator_complete
+
+- name: Display Orchestrator completion status
+  debug:
+    msg: "{{ debug_orchestrator_complete.stdout_lines }}"
+# ==============================================================================
+# END DEBUG SECTION
+# ==============================================================================

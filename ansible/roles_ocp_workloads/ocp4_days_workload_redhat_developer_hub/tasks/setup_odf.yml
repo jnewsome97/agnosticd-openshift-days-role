@@ -1,0 +1,203 @@
+---
+# DAYS FIX: Install OpenShift Data Foundation (ODF) if not already installed
+# ODF is required for Quay object storage (NooBaa)
+
+- name: Check if ODF StorageCluster already exists
+  kubernetes.core.k8s_info:
+    api_version: ocs.openshift.io/v1
+    kind: StorageCluster
+    name: ocs-storagecluster
+    namespace: openshift-storage
+  register: r_storagecluster_check
+  ignore_errors: true
+
+- name: Set odf_already_installed fact
+  ansible.builtin.set_fact:
+    odf_already_installed: "{{ r_storagecluster_check.resources | default([]) | length > 0 }}"
+
+- name: Display ODF installation status
+  ansible.builtin.debug:
+    msg: "ODF already installed: {{ odf_already_installed }}"
+
+- name: Install ODF
+  when: not odf_already_installed
+  block:
+    # Check for minimum 3 worker nodes required for Ceph
+    - name: Define label_selector list for workers
+      ansible.builtin.set_fact:
+        odf_label_selector_list:
+          - node-role.kubernetes.io/worker
+          - "!node-role.kubernetes.io/infra"
+
+    - name: Discover worker nodes
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        label_selectors: "{{ odf_label_selector_list }}"
+      register: r_worker_nodes
+
+    - name: Check for minimum 3 worker nodes
+      ansible.builtin.assert:
+        that: r_worker_nodes.resources | length >= 3
+        success_msg: "Found {{ r_worker_nodes.resources | length }} worker nodes. Continuing with ODF installation."
+        fail_msg: |
+          ODF requires at least 3 worker nodes for Ceph storage.
+          Found only {{ r_worker_nodes.resources | length }} worker nodes.
+          To skip Quay (which requires ODF), set: ocp4_workload_redhat_developer_hub_skip_quay: true
+
+    - name: Set worker node names
+      ansible.builtin.set_fact:
+        odf_worker_nodes: "{{ r_worker_nodes | json_query('resources[*].metadata.name') }}"
+
+    - name: Add Ceph labels to worker nodes
+      kubernetes.core.k8s:
+        state: patched
+        api_version: v1
+        kind: Node
+        name: "{{ worker_node }}"
+        definition:
+          apiVersion: v1
+          kind: Node
+          name: "{{ worker_node }}"
+          metadata:
+            labels:
+              cluster.ocs.openshift.io/openshift-storage: ''
+      loop: "{{ odf_worker_nodes }}"
+      loop_control:
+        loop_var: worker_node
+        label: "{{ worker_node }}"
+
+    - name: Create openshift-storage namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: openshift-storage
+
+    - name: Create OperatorGroup for ODF
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: openshift-storage-og
+            namespace: openshift-storage
+          spec:
+            targetNamespaces:
+              - openshift-storage
+
+    - name: Create ODF operator subscription
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: odf-operator
+            namespace: openshift-storage
+            labels:
+              operators.coreos.com/odf-operator.openshift-storage: ''
+          spec:
+            channel: "{{ ocp4_workload_redhat_developer_hub_odf_channel | default('stable-4.17') }}"
+            installPlanApproval: Automatic
+            name: odf-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+
+    - name: Wait for StorageCluster CRD to become available
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: storageclusters.ocs.openshift.io
+      register: r_crd_storageclusters
+      retries: 60
+      delay: 10
+      until:
+        - r_crd_storageclusters.resources is defined
+        - r_crd_storageclusters.resources | list | length == 1
+
+    - name: Wait for ODF console plugin to become available
+      kubernetes.core.k8s_info:
+        api_version: console.openshift.io/v1
+        kind: ConsolePlugin
+        name: odf-console
+      register: r_console_plugin
+      retries: 60
+      delay: 10
+      until: r_console_plugin.resources | list | length == 1
+
+    - name: Enable ODF console plugin
+      kubernetes.core.k8s:
+        state: patched
+        kind: Console
+        api_version: operator.openshift.io/v1
+        name: cluster
+        definition:
+          spec:
+            plugins:
+              - odf-console
+
+    - name: Create ODF StorageCluster
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: ocs.openshift.io/v1
+          kind: StorageCluster
+          metadata:
+            namespace: openshift-storage
+            name: ocs-storagecluster
+          spec:
+            manageNodes: false
+            storageDeviceSets:
+              - name: ocs-deviceset
+                count: 1
+                replica: 3
+                dataPVCTemplate:
+                  spec:
+                    storageClassName: "{{ ocp4_workload_redhat_developer_hub_odf_storage_class | default('gp3-csi') }}"
+                    accessModes:
+                      - ReadWriteOnce
+                    volumeMode: Block
+                    resources:
+                      requests:
+                        storage: "{{ ocp4_workload_redhat_developer_hub_odf_storage_size | default('500Gi') }}"
+                portable: true
+
+    - name: Wait for ODF StorageCluster to be ready (this may take 15-20 minutes)
+      kubernetes.core.k8s_info:
+        api_version: ocs.openshift.io/v1
+        kind: StorageCluster
+        name: ocs-storagecluster
+        namespace: openshift-storage
+      register: r_storagecluster_ready
+      retries: 120
+      delay: 10
+      until:
+        - r_storagecluster_ready.resources is defined
+        - r_storagecluster_ready.resources | length > 0
+        - r_storagecluster_ready.resources[0].status is defined
+        - r_storagecluster_ready.resources[0].status.phase is defined
+        - r_storagecluster_ready.resources[0].status.phase == 'Ready'
+
+    - name: Display ODF installation complete
+      ansible.builtin.debug:
+        msg: "ODF StorageCluster is ready (phase: {{ r_storagecluster_ready.resources[0].status.phase }})"
+
+- name: Verify NooBaa is available for Quay
+  kubernetes.core.k8s_info:
+    api_version: noobaa.io/v1alpha1
+    kind: BucketClass
+    namespace: openshift-storage
+  register: r_bucket_class_final
+  retries: 60
+  delay: 10
+  until:
+    - r_bucket_class_final.resources is defined
+    - r_bucket_class_final.resources | length > 0
+
+- name: Display ODF status
+  ansible.builtin.debug:
+    msg: "ODF is ready with {{ r_bucket_class_final.resources | length }} BucketClass(es) available for Quay"
