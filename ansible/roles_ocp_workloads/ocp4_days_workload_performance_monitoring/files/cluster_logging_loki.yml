@@ -9,6 +9,13 @@ spec:
   managementState: Managed
   serviceAccount:
     name: collector
+  # DAYS FIX: Increased collector memory to prevent OOMKilled on busy nodes
+  collector:
+    resources:
+      limits:
+        memory: 4Gi
+      requests:
+        memory: 256Mi
   outputs:
     - name: default-lokistack
       type: lokiStack
