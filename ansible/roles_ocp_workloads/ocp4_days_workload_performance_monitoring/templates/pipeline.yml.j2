@@ -1,4 +1,6 @@
-apiVersion: tekton.dev/v1beta1
+# DAYS FIX: Updated for OpenShift Pipelines 1.20+ which deprecated ClusterTask
+# Now uses cluster resolver to reference cluster tasks
+apiVersion: tekton.dev/v1
 kind: Pipeline
 metadata:
   name: build-and-deploy-apps
@@ -8,7 +10,7 @@ spec:
       description: Your Git repo fork, such as {{ workshop_app_git }}
       type: string
     - name: app-name
-      description: 'App Name (maven project: quarkus-app | micronaut-app | springboot-app)'      
+      description: 'App Name (maven project: quarkus-app | micronaut-app | springboot-app)'
       type: string
     - name: registry-repo
       description: Registry Repository name (usually your quay.io username)
@@ -56,8 +58,14 @@ spec:
         - name: userHome
           value: /tekton/home
       taskRef:
-        kind: ClusterTask
-        name: git-clone
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: output
           workspace: shared-workspace
@@ -81,8 +89,14 @@ spec:
       runAfter:
         - git-clone
       taskRef:
-        kind: ClusterTask
-        name: maven
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: maven
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: source
           workspace: shared-workspace
@@ -111,8 +125,14 @@ spec:
       runAfter:
         - maven-package
       taskRef:
-        kind: ClusterTask
-        name: buildah
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: buildah
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: source
           workspace: shared-workspace
@@ -127,8 +147,14 @@ spec:
       runAfter:
         - image-build
       taskRef:
-        kind: ClusterTask
-        name: skopeo-copy
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: skopeo-copy
+          - name: namespace
+            value: openshift-pipelines
       workspaces:
         - name: images-url
           workspace: image-urls-cm
@@ -148,7 +174,7 @@ spec:
             - '--probe-liveness=http:::/q/health/live'
             - '--probe-liveness-opts=initialDelaySeconds=3,periodSeconds=30,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--probe-readiness=http:::/q/health/ready'
-            - '--probe-readiness-opts=initialDelaySeconds=3,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10' 
+            - '--probe-readiness-opts=initialDelaySeconds=3,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--request=cpu={{ serverless_app_cpu_request }},memory={{ serverless_app_memory_request }}'
             - '--limit=cpu={{ serverless_app_cpu_limit }},memory={{ serverless_app_memory_limit }}'
             - '--env=JAVA_MAX_MEM_RATIO=75.0'
@@ -159,8 +185,14 @@ spec:
             - --force
             - '--namespace={{ user }}-staging'
       taskRef:
-        kind: ClusterTask
-        name: kn
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: kn
+          - name: namespace
+            value: openshift-pipelines
       runAfter:
         - image-tag
       when:
@@ -183,7 +215,7 @@ spec:
             - '--probe-liveness=http:::/health'
             - '--probe-liveness-opts=initialDelaySeconds=3,periodSeconds=30,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--probe-readiness=http:::/health'
-            - '--probe-readiness-opts=initialDelaySeconds=3,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10' 
+            - '--probe-readiness-opts=initialDelaySeconds=3,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--request=cpu={{ serverless_app_cpu_request }},memory={{ serverless_app_memory_request }}'
             - '--limit=cpu={{ serverless_app_cpu_limit }},memory={{ serverless_app_memory_limit }}'
             - '--env=JAVA_MAX_MEM_RATIO=75.0'
@@ -194,8 +226,14 @@ spec:
             - --force
             - '--namespace={{ user }}-staging'
       taskRef:
-        kind: ClusterTask
-        name: kn
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: kn
+          - name: namespace
+            value: openshift-pipelines
       runAfter:
         - image-tag
       when:
@@ -218,7 +256,7 @@ spec:
             - '--probe-liveness=http:::/actuator/health/liveness'
             - '--probe-liveness-opts=initialDelaySeconds=5,periodSeconds=30,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--probe-readiness=http:::/actuator/health/readiness'
-            - '--probe-readiness-opts=initialDelaySeconds=5,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10' 
+            - '--probe-readiness-opts=initialDelaySeconds=5,periodSeconds=10,failureThreshold=5,successThreshold=1,timeoutSeconds=10'
             - '--request=cpu={{ serverless_app_cpu_request }},memory={{ serverless_app_memory_request }}'
             - '--limit=cpu={{ serverless_app_cpu_limit }},memory={{ serverless_app_memory_limit }}'
             - '--env=JAVA_MAX_MEM_RATIO=75.0'
@@ -230,8 +268,14 @@ spec:
             - --force
             - '--namespace={{ user }}-staging'
       taskRef:
-        kind: ClusterTask
-        name: kn
+        resolver: cluster
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: kn
+          - name: namespace
+            value: openshift-pipelines
       runAfter:
         - image-tag
       when:

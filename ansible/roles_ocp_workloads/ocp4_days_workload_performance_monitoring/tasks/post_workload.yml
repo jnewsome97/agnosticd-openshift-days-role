@@ -1,8 +1,10 @@
 ---
 # Implement your Post Workload deployment tasks here
+# DAYS FIX: agnosticd_user_info is only available in full AgnosticD framework
+# Use debug instead for standalone DAYS workloads
 - name: Output Workshop Info
-  agnosticd_user_info:
-    msg: " "
+  ansible.builtin.debug:
+    msg: "Workshop deployment completed successfully"
   when: not silent|bool
 
 # Leave this as the last task in the playbook.

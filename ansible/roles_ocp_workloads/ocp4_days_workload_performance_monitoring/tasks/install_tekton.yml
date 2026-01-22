@@ -1,4 +1,20 @@
+# DAYS FIX: Check if Pipelines operator is already installed
+- name: Check if OpenShift Pipelines operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "openshift-pipelines-operator" | grep -i "Succeeded" || true
+  register: r_pipelines_csv_check
+  ignore_errors: true
+
+- name: Set pipelines_operator_installed fact
+  ansible.builtin.set_fact:
+    pipelines_operator_installed: "{{ r_pipelines_csv_check.stdout | length > 0 }}"
+
+- name: Display Pipelines operator status
+  debug:
+    msg: "OpenShift Pipelines operator installed: {{ pipelines_operator_installed }}"
+
 - name: Install Openshift Pipelines (Tekton) Operator
+  when: not pipelines_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -16,6 +32,11 @@
     # install_operator_catalogsource_namespace: "{{ ocp4_workload_performance_monitoring_catalogsource_namespace }}"
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
+
+- name: Skip Pipelines operator install - already installed
+  when: pipelines_operator_installed
+  debug:
+    msg: "OpenShift Pipelines operator already installed, skipping"
 
 - name: Wait Tekton Operator to be Up & Running
   kubernetes.core.k8s_info:

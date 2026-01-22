@@ -1,4 +1,20 @@
+# DAYS FIX: Check if Hyperfoil operator is already installed
+- name: Check if Hyperfoil operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "hyperfoil-operator" | grep -i "Succeeded" || true
+  register: r_hyperfoil_csv_check
+  ignore_errors: true
+
+- name: Set hyperfoil_operator_installed fact
+  ansible.builtin.set_fact:
+    hyperfoil_operator_installed: "{{ r_hyperfoil_csv_check.stdout | length > 0 }}"
+
+- name: Display Hyperfoil operator status
+  debug:
+    msg: "Hyperfoil operator installed: {{ hyperfoil_operator_installed }}"
+
 - name: Install Hyperfoil Operator
+  when: not hyperfoil_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -9,13 +25,19 @@
     # install_operator_manage_namespaces: ["openshift-operators"]
     install_operator_channel: "alpha"
     # install_operator_starting_csv: ""
-    # install_operator_catalog: community-operators
+    # DAYS FIX: Hyperfoil is in community-operators catalog
+    install_operator_catalog: community-operators
     install_operator_automatic_install_plan_approval: "{{ ocp4_workload_performance_monitoring_automatic_install_plan_approval }}"
     install_operator_catalogsource_setup: "{{ ocp4_workload_performance_monitoring_catalogsource_setup }}"
     install_operator_catalogsource_name: "{{ ocp4_workload_performance_monitoring_community_catalogsource_name }}"
     # install_operator_catalogsource_namespace: "{{ ocp4_workload_performance_monitoring_catalogsource_namespace }}"
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_community_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
+
+- name: Skip Hyperfoil operator install - already installed
+  when: hyperfoil_operator_installed
+  debug:
+    msg: "Hyperfoil operator already installed, skipping"
 
 - name: Wait Hyperfoil Operator
   kubernetes.core.k8s_info:

@@ -1,9 +1,25 @@
 - name: Install NooBaa
   ansible.builtin.include_tasks: install_noobaa.yml
 
+# DAYS FIX: Check if Loki operator is already installed
+- name: Check if Loki operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "loki-operator" | grep -i "Succeeded" || true
+  register: r_loki_csv_check
+  ignore_errors: true
+
+- name: Set loki_operator_installed fact
+  ansible.builtin.set_fact:
+    loki_operator_installed: "{{ r_loki_csv_check.stdout | length > 0 }}"
+
+- name: Display Loki operator status
+  debug:
+    msg: "Loki operator installed: {{ loki_operator_installed }}"
+
 # DAYS FIX: Changed channel from "stable" to "stable-6.4" - OCP 4.20 uses versioned channels
 # DAYS FIX: Explicitly specify redhat-operators catalog (community-operators also has loki-operator with only alpha channel)
 - name: Install Loki Operator
+  when: not loki_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -20,7 +36,29 @@
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
 
+- name: Skip Loki operator install - already installed
+  when: loki_operator_installed
+  debug:
+    msg: "Loki operator already installed, skipping"
+
+# DAYS FIX: Check if Cluster Logging operator is already installed
+- name: Check if Cluster Logging operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "cluster-logging" | grep -i "Succeeded" || true
+  register: r_logging_csv_check
+  ignore_errors: true
+
+- name: Set logging_operator_installed fact
+  ansible.builtin.set_fact:
+    logging_operator_installed: "{{ r_logging_csv_check.stdout | length > 0 }}"
+
+- name: Display Cluster Logging operator status
+  debug:
+    msg: "Cluster Logging operator installed: {{ logging_operator_installed }}"
+
+# DAYS FIX: Changed channel from "stable" to "stable-6.4" - OCP 4.20 uses versioned channels
 - name: Install OpenshiftLogging Operator
+  when: not logging_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -28,15 +66,20 @@
     install_operator_name: cluster-logging
     install_operator_namespace: openshift-logging
     install_operator_manage_namespaces: ["openshift-logging"]
-    install_operator_channel: "stable"
+    install_operator_channel: "stable-6.4"
     # install_operator_starting_csv: ""
-    # install_operator_catalog: redhat-operators
+    install_operator_catalog: redhat-operators
     install_operator_automatic_install_plan_approval: "{{ ocp4_workload_performance_monitoring_automatic_install_plan_approval }}"
     install_operator_catalogsource_setup: "{{ ocp4_workload_performance_monitoring_catalogsource_setup }}"
     install_operator_catalogsource_name: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_name }}"
     # install_operator_catalogsource_namespace: "{{ ocp4_workload_performance_monitoring_catalogsource_namespace }}"
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
+
+- name: Skip Cluster Logging operator install - already installed
+  when: logging_operator_installed
+  debug:
+    msg: "Cluster Logging operator already installed, skipping"
 
 - name: Wait Logging Operator
   kubernetes.core.k8s_info:
@@ -146,22 +189,91 @@
     - r_loki_deploy.resources[0].status.readyReplicas is defined
     - r_loki_deploy.resources[0].status.readyReplicas >= 1
 
-- name: Evaluate Logging Instance
+# DAYS FIX: Create service account for ClusterLogForwarder (required for Logging 6.x)
+- name: Create collector service account
+  kubernetes.core.k8s:
+    validate_certs: '{{ verify_tls }}'
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: collector
+        namespace: openshift-logging
+
+- name: Grant collector permissions for application logs
+  kubernetes.core.k8s:
+    validate_certs: '{{ verify_tls }}'
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: logging-collector-application-logs
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: collect-application-logs
+      subjects:
+        - kind: ServiceAccount
+          name: collector
+          namespace: openshift-logging
+
+- name: Grant collector permissions for infrastructure logs
+  kubernetes.core.k8s:
+    validate_certs: '{{ verify_tls }}'
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: logging-collector-infrastructure-logs
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: collect-infrastructure-logs
+      subjects:
+        - kind: ServiceAccount
+          name: collector
+          namespace: openshift-logging
+
+- name: Grant collector permissions to write logs
+  kubernetes.core.k8s:
+    validate_certs: '{{ verify_tls }}'
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: logging-collector-logs-writer
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: logging-collector-logs-writer
+      subjects:
+        - kind: ServiceAccount
+          name: collector
+          namespace: openshift-logging
+
+# DAYS FIX: Updated for Logging 6.x - uses ClusterLogForwarder instead of ClusterLogging
+- name: Evaluate ClusterLogForwarder Instance
   kubernetes.core.k8s:
     validate_certs: '{{ verify_tls }}'
     state: present
     resource_definition: "{{ lookup('file', 'cluster_logging_loki.yml') }}"
 
-- name: Evaluate Logging Instance is ready
+# DAYS FIX: Wait for collector DaemonSet instead of logging-view-plugin Deployment
+- name: Evaluate Logging collector is ready
   kubernetes.core.k8s_info:
     validate_certs: '{{ verify_tls }}'
     api_version: apps/v1
-    kind: Deployment
-    name: logging-view-plugin
+    kind: DaemonSet
+    name: collector
     namespace: openshift-logging
-  register: r_logging_deploy
+  register: r_logging_collector
   retries: 50
   delay: 10
   until:
-    - r_logging_deploy.resources[0].status.readyReplicas is defined
-    - r_logging_deploy.resources[0].status.readyReplicas == 1
+    - r_logging_collector.resources | length > 0
+    - r_logging_collector.resources[0].status.numberReady is defined
+    - r_logging_collector.resources[0].status.numberReady >= 1

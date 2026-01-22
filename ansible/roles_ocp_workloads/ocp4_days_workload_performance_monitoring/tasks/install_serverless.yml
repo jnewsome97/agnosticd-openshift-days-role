@@ -1,4 +1,20 @@
+# DAYS FIX: Check if Serverless operator is already installed
+- name: Check if Serverless operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "serverless-operator" | grep -i "Succeeded" || true
+  register: r_serverless_csv_check
+  ignore_errors: true
+
+- name: Set serverless_operator_installed fact
+  ansible.builtin.set_fact:
+    serverless_operator_installed: "{{ r_serverless_csv_check.stdout | length > 0 }}"
+
+- name: Display Serverless operator status
+  debug:
+    msg: "Serverless operator installed: {{ serverless_operator_installed }}"
+
 - name: Install Openshift Serverless Operator
+  when: not serverless_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -8,13 +24,19 @@
     # install_operator_manage_namespaces: ["openshift-operators"]
     install_operator_channel: "stable"
     # install_operator_starting_csv: ""
-    # install_operator_catalog: redhat-operators
+    # DAYS FIX: Serverless is in redhat-operators catalog
+    install_operator_catalog: redhat-operators
     install_operator_automatic_install_plan_approval: "{{ ocp4_workload_performance_monitoring_automatic_install_plan_approval }}"
     install_operator_catalogsource_setup: "{{ ocp4_workload_performance_monitoring_catalogsource_setup }}"
     install_operator_catalogsource_name: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_name }}"
     # install_operator_catalogsource_namespace: "{{ ocp4_workload_performance_monitoring_catalogsource_namespace }}"
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_redhat_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
+
+- name: Skip Serverless operator install - already installed
+  when: serverless_operator_installed
+  debug:
+    msg: "Serverless operator already installed, skipping"
 
 - name: Wait Serverless Operator To Be Running
   kubernetes.core.k8s_info:

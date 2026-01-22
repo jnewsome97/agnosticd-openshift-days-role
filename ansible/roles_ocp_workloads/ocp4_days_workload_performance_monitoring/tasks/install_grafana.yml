@@ -1,6 +1,7 @@
+# DAYS FIX: Use common_admin_password if defined, otherwise use default
 - name: Set Grafana Password
   ansible.builtin.set_fact:
-    grafana_admin_password: "{{ common_admin_password }}"
+    grafana_admin_password: "{{ common_admin_password | default('openshift') }}"
 
 - name: Evaluate Namespace {{ grafana_project }}
   kubernetes.core.k8s:
@@ -15,7 +16,23 @@
           openshift.io/description: "Project for monitoring dashboard"
           openshift.io/display-name: "{{ grafana_project }}"
 
+# DAYS FIX: Check if Grafana operator is already installed
+- name: Check if Grafana operator CSV already exists
+  shell: |
+    oc get csv -A 2>/dev/null | grep -i "grafana-operator" | grep -i "Succeeded" || true
+  register: r_grafana_csv_check
+  ignore_errors: true
+
+- name: Set grafana_operator_installed fact
+  ansible.builtin.set_fact:
+    grafana_operator_installed: "{{ r_grafana_csv_check.stdout | length > 0 }}"
+
+- name: Display Grafana operator status
+  debug:
+    msg: "Grafana operator installed: {{ grafana_operator_installed }}"
+
 - name: Install Grafana Operator
+  when: not grafana_operator_installed
   ansible.builtin.include_role:
     name: install_operator
   vars:
@@ -25,13 +42,19 @@
     # install_operator_manage_namespaces: ["{{ grafana_project }}"]
     install_operator_channel: "v5"
     # install_operator_starting_csv: ""
-    # install_operator_catalog: community-operators
+    # DAYS FIX: Grafana operator is in community-operators catalog
+    install_operator_catalog: community-operators
     install_operator_automatic_install_plan_approval: "{{ ocp4_workload_performance_monitoring_automatic_install_plan_approval }}"
     install_operator_catalogsource_setup: "{{ ocp4_workload_performance_monitoring_catalogsource_setup }}"
     install_operator_catalogsource_name: "{{ ocp4_workload_performance_monitoring_community_catalogsource_name }}"
     # install_operator_catalogsource_namespace: "{{ ocp4_workload_performance_monitoring_catalogsource_namespace }}"
     install_operator_catalogsource_image: "{{ ocp4_workload_performance_monitoring_community_catalogsource_image }}"
     install_operator_catalogsource_image_tag: "{{ ocp4_workload_performance_monitoring_catalogsource_image_tag }}"
+
+- name: Skip Grafana operator install - already installed
+  when: grafana_operator_installed
+  debug:
+    msg: "Grafana operator already installed, skipping"
 
 - name: Wait Grafana Operator
   kubernetes.core.k8s_info:
@@ -75,39 +98,40 @@
 
 # start configuration
 
-- name: Get a list of all Secret objects
-  kubernetes.core.k8s_info:
+# DAYS FIX: In Kubernetes 1.24+ (OCP 4.11+), SA token secrets are no longer auto-created
+# Create a long-lived token secret manually for the Grafana service account
+- name: Create Grafana ServiceAccount token secret
+  kubernetes.core.k8s:
     validate_certs: '{{ verify_tls }}'
-    api_version: v1
-    kind: Secret
-    namespace: '{{ grafana_project }}'
-  register: secrets_list
-
-- name: Iterate over list of secrets until the correct string is found
-  ansible.builtin.set_fact:
-    secret_name: "{{ item['metadata']['name'] }}"
-  loop: "{{ secrets_list.resources }}"
-  when: item['metadata']['name'] | regex_search('grafana-sa-token.')
-  no_log: true
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: grafana-sa-token
+        namespace: '{{ grafana_project }}'
+        annotations:
+          kubernetes.io/service-account.name: grafana-sa
+      type: kubernetes.io/service-account-token
 
 - name: Get Grafana ServiceAccount Token
   kubernetes.core.k8s_info:
     validate_certs: '{{ verify_tls }}'
     kind: Secret
-    name: '{{ secret_name }}'
+    name: grafana-sa-token
     namespace: '{{ grafana_project }}'
     api_version: v1
   register: r_grafana_secret
   until:
     - r_grafana_secret.resources is defined
+    - r_grafana_secret.resources | length > 0
+    - r_grafana_secret.resources[0].data.token is defined
   retries: 10
   delay: 15
 
 - name: Set grafana_token
   ansible.builtin.set_fact:
     grafana_token: '{{ r_grafana_secret.resources[0].data.token | b64decode }}'
-  when:
-    - r_grafana_secret.resources[0].data.token is defined
 
 - name: Evaluate Grafana ServiceAccount permissons
   kubernetes.core.k8s:
