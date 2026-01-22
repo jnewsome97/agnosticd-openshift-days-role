@@ -82,11 +82,11 @@
 # DAYS FIX: Direct variable check to ensure skip_quay works properly
 - name: Set skip_quay fact
   ansible.builtin.set_fact:
-    _skip_quay: "{{ ocp4_workload_redhat_developer_hub_skip_quay | default(false) | bool }}"
+    _skip_quay: "{{ ocp4_workload_redhat_developer_hub_bootstrap_skip_quay | default(false) | bool }}"
 
 - name: Display skip_quay value
   debug:
-    msg: "Skip Quay: {{ _skip_quay }} (from ocp4_workload_redhat_developer_hub_skip_quay={{ ocp4_workload_redhat_developer_hub_skip_quay | default('not set') }})"
+    msg: "Skip Quay: {{ _skip_quay }} (from ocp4_workload_redhat_developer_hub_bootstrap_skip_quay={{ ocp4_workload_redhat_developer_hub_bootstrap_skip_quay | default('not set') }})"
 
 - name: Setup Quay
   when: not _skip_quay
@@ -96,7 +96,7 @@
 - name: Skip Quay setup (ODF not available or skip requested)
   when: _skip_quay
   ansible.builtin.debug:
-    msg: "Skipping Quay setup - ocp4_workload_redhat_developer_hub_skip_quay is true"
+    msg: "Skipping Quay setup - ocp4_workload_redhat_developer_hub_bootstrap_skip_quay is true"
 
 - name: Setup Orchestrator
   when: ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_enabled

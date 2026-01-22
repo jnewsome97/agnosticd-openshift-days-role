@@ -128,6 +128,42 @@
     - r_argocd_ready.resources[0].status.phase is defined
     - r_argocd_ready.resources[0].status.phase == 'Available'
 
+# DAYS FIX: Grant cluster-admin to ArgoCD controller so it can manage cluster-scoped resources
+# This is required for Vault which creates ClusterRoleBindings
+- name: Grant cluster-admin to ArgoCD application controller
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: janus-argocd-application-controller-cluster-admin
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - kind: ServiceAccount
+          name: argocd-argocd-application-controller
+          namespace: janus-argocd
+
+- name: Grant cluster-admin to ArgoCD server
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: janus-argocd-server-cluster-admin
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - kind: ServiceAccount
+          name: argocd-argocd-server
+          namespace: janus-argocd
+
 # Wait for ArgoCD secrets
 - name: Wait until ArgoCD secrets are ready
   shell: |

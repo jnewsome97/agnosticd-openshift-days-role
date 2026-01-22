@@ -2,6 +2,10 @@
 # Implement your Pre Workload deployment tasks here
 # -------------------------------------------------
 
+# DAYS FIX: Install GitOps operator to make this workload self-contained
+- name: Setup OpenShift GitOps operator
+  when: ocp4_workload_gitops_gitlab_gitops_type == 'argocd'
+  ansible.builtin.include_tasks: setup_gitops.yml
 
 # Leave these as the last tasks in the playbook
 # ---------------------------------------------

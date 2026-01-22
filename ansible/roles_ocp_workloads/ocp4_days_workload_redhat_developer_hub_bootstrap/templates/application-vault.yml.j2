@@ -2,7 +2,9 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: vault
-  namespace: janus-argocd
+  # DAYS FIX: Use openshift-gitops ArgoCD since it has cluster-admin permissions
+  # The janus-argocd is in namespaced mode and can't create cluster-scoped resources like ClusterRoleBinding
+  namespace: openshift-gitops
 spec:
   destination:
     namespace: {{ ocp4_workload_redhat_developer_hub_bootstrap_vault_namespace }}
