@@ -200,6 +200,7 @@
   loop_control:
     loop_var: user
 
+# DAYS FIX: Increased retries from 10 to 20 - BackingStore can take 5-10 min on slow storage
 - name: Evaluate BackingStore is ready
   kubernetes.core.k8s_info:
     validate_certs: '{{ verify_tls }}'
@@ -208,7 +209,7 @@
     name: noobaa-pv-backing-store
     namespace: openshift-storage
   register: r_backingstore
-  retries: 10
+  retries: 20
   delay: 30
   until:
     - r_backingstore.resources is defined
