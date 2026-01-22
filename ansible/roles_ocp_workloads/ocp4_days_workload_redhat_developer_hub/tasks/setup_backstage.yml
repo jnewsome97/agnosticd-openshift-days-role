@@ -119,6 +119,32 @@
   ansible.builtin.include_tasks:
     file: ./setup_backstage_repo.yml
 
+# DAYS FIX: Copy cluster pull-secret to backstage namespace if not provided
+# This securely uses the cluster's existing credentials without storing them in git
+- name: Copy cluster pull-secret to backstage namespace
+  when: redhat_gpte_devhub_pull_secret | default('') | length == 0
+  block:
+    - name: Get cluster pull-secret
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: pull-secret
+        namespace: openshift-config
+      register: r_cluster_pull_secret
+
+    - name: Create pull-secret in backstage namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: redhat-gpte-devhub-pull-secret
+            namespace: "{{ ocp4_workload_redhat_developer_hub_backstage_namespace }}"
+          type: kubernetes.io/dockerconfigjson
+          data:
+            .dockerconfigjson: "{{ r_cluster_pull_secret.resources[0].data['.dockerconfigjson'] }}"
+
 - name: Create Backstage Gitops application
   kubernetes.core.k8s:
     state: present
