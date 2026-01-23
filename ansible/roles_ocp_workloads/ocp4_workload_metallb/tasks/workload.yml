@@ -58,15 +58,17 @@
 # Set DNS management to Unmanaged since external DNS is pre-configured.
 - name: Set ingress DNS management to Unmanaged for MetalLB compatibility
   when: ocp4_workload_metallb_enable_ipaddresspool | default(false)
-  kubernetes.core.k8s_json_patch:
+  kubernetes.core.k8s:
     api_version: operator.openshift.io/v1
     kind: IngressController
     namespace: openshift-ingress-operator
     name: default
-    patch:
-      - op: add
-        path: /spec/endpointPublishingStrategy/loadBalancer/dnsManagementPolicy
-        value: Unmanaged
+    state: present
+    definition:
+      spec:
+        endpointPublishingStrategy:
+          loadBalancer:
+            dnsManagementPolicy: Unmanaged
 
 # Leave this as the last task in the playbook.
 - name: Workload tasks complete
