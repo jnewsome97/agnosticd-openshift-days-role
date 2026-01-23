@@ -56,19 +56,26 @@
 # DAYS FIX: When MetalLB provides LoadBalancer IPs, the ingress operator's
 # Route53 DNS integration fails because it expects AWS ELB hostnames, not IPs.
 # Set DNS management to Unmanaged since external DNS is pre-configured.
-- name: Set ingress DNS management to Unmanaged for MetalLB compatibility
+- name: Get current IngressController endpoint publishing strategy
   when: ocp4_workload_metallb_enable_ipaddresspool | default(false)
-  kubernetes.core.k8s:
+  kubernetes.core.k8s_info:
     api_version: operator.openshift.io/v1
     kind: IngressController
-    namespace: openshift-ingress-operator
     name: default
-    state: present
-    definition:
-      spec:
-        endpointPublishingStrategy:
-          loadBalancer:
-            dnsManagementPolicy: Unmanaged
+    namespace: openshift-ingress-operator
+  register: r_ingresscontroller
+
+- name: Set ingress DNS management to Unmanaged for MetalLB compatibility
+  when:
+    - ocp4_workload_metallb_enable_ipaddresspool | default(false)
+    - r_ingresscontroller.resources[0].status.endpointPublishingStrategy.loadBalancer.dnsManagementPolicy | default('') == 'Managed'
+  ansible.builtin.command:
+    cmd: >-
+      oc patch ingresscontroller default -n openshift-ingress-operator
+      --type=merge
+      -p '{"spec":{"endpointPublishingStrategy":{"type":"LoadBalancerService","loadBalancer":{"scope":"External","dnsManagementPolicy":"Unmanaged"}}}}'
+  register: r_patch_ingress
+  changed_when: r_patch_ingress.rc == 0
 
 # Leave this as the last task in the playbook.
 - name: Workload tasks complete
