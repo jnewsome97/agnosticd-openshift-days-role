@@ -1,0 +1,32 @@
+---
+become_override: false
+verify_tls: false
+insecure_skip_tls_verify: true
+silent: false
+
+# Logging storage settings
+ocp4_workload_logging_storage_class: gp3-csi
+ocp4_workload_logging_storage_size: 10G
+ocp4_workload_logging_loki_size: "1x.extra-small"
+
+# NooBaa settings
+ocp4_workload_logging_noobaa_pv_size: "200Gi"
+ocp4_workload_logging_noobaa_storage_class: gp3-csi
+
+# Operator install settings
+ocp4_workload_logging_automatic_install_plan_approval: true
+ocp4_workload_logging_catalogsource_setup: false
+ocp4_workload_logging_redhat_catalogsource_name: ""
+ocp4_workload_logging_redhat_catalogsource_image: ""
+ocp4_workload_logging_catalogsource_image_tag: ""
+
+# DAYS FIX: Silence expected alerts in demo/sandbox environments
+ocp4_workload_logging_silence_expected_alerts: true
+ocp4_workload_logging_silence_kvm_alert: true
+ocp4_workload_logging_silence_alertmanager_config: true
+ocp4_workload_logging_silence_pdb_limit: true
+ocp4_workload_logging_silence_insights: true
+ocp4_workload_logging_silence_servicemonitor_rejections: true
+
+# Infrastructure node placement (optional)
+enable_infra_nodes: false

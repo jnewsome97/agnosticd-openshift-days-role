@@ -1,0 +1,4 @@
+---
+- name: Remove workload
+  ansible.builtin.debug:
+    msg: "Removal of OpenShift Logging workload not implemented"

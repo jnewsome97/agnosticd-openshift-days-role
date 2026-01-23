@@ -1,0 +1,4 @@
+---
+- name: Pre-workload tasks
+  ansible.builtin.debug:
+    msg: "Starting OpenShift Logging workload deployment"

@@ -1,0 +1,20 @@
+---
+- name: Running Pre Workload Tasks
+  ansible.builtin.include_tasks:
+    file: ./pre_workload.yml
+  when: ACTION == "create" or ACTION == "provision"
+
+- name: Running Workload Tasks
+  ansible.builtin.include_tasks:
+    file: ./workload.yml
+  when: ACTION == "create" or ACTION == "provision"
+
+- name: Running Post Workload Tasks
+  ansible.builtin.include_tasks:
+    file: ./post_workload.yml
+  when: ACTION == "create" or ACTION == "provision"
+
+- name: Running Workload removal Tasks
+  ansible.builtin.include_tasks:
+    file: ./remove_workload.yml
+  when: ACTION == "remove" or ACTION == "destroy"

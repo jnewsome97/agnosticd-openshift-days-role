@@ -1,0 +1,28 @@
+---
+# OpenShift Logging with Loki stack
+# This workload installs:
+# - OpenShift Logging operator (Loki-based)
+# - NooBaa for S3 object storage (used by Loki)
+# - ClusterLogForwarder for log collection
+
+- name: Setting up workload
+  ansible.builtin.debug:
+    msg: "Setting up OpenShift Logging with Loki"
+
+- name: Install NooBaa for Loki storage backend
+  ansible.builtin.include_tasks: install_noobaa.yml
+
+- name: Install OpenShift Logging (Loki)
+  ansible.builtin.include_tasks: install_logging_loki.yml
+
+- name: Enable User Workload Monitoring
+  ansible.builtin.include_tasks: enable_userworkload_monitoring.yml
+
+- name: Silence expected alerts for demo environments
+  ansible.builtin.include_tasks: silence_expected_alerts.yml
+  when: ocp4_workload_logging_silence_expected_alerts | default(true) | bool
+
+- name: Workload tasks complete
+  when: not silent | bool
+  ansible.builtin.debug:
+    msg: "OpenShift Logging workload completed successfully"

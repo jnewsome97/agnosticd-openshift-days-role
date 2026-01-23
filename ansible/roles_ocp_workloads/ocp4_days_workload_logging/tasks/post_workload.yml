@@ -1,0 +1,4 @@
+---
+- name: Post-workload tasks
+  ansible.builtin.debug:
+    msg: "OpenShift Logging workload deployment complete"
