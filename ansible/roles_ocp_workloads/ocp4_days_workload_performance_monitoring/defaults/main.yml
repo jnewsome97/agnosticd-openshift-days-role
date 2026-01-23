@@ -38,3 +38,12 @@ devspaces_images_list: >-
   project-clone-rhel8=registry.redhat.io/devworkspace/devworkspace-project-clone-rhel8:latest;
   code-rhel8=registry.redhat.io/devspaces/code-rhel8:latest;
   traefik-rhel8=registry.redhat.io/devspaces/traefik-rhel8:latest;
+
+# DAYS FIX: Silence expected alerts in demo/sandbox environments
+# Set to false to allow specific alerts to fire
+ocp4_workload_performance_monitoring_silence_expected_alerts: true
+ocp4_workload_performance_monitoring_silence_kvm_alert: true
+ocp4_workload_performance_monitoring_silence_alertmanager_config: true
+ocp4_workload_performance_monitoring_silence_pdb_limit: true
+ocp4_workload_performance_monitoring_silence_insights: true
+ocp4_workload_performance_monitoring_silence_servicemonitor_rejections: true

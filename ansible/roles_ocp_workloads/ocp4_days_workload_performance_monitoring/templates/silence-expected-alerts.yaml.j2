@@ -1,0 +1,48 @@
+---
+# DAYS FIX: Silence alerts that are expected in DAYS demo/sandbox environments
+# These alerts fire due to infrastructure constraints (AWS, demo configs) not actual issues
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: days-silence-expected-alerts
+  namespace: openshift-monitoring
+spec:
+  groups:
+  - name: days-silenced-alerts
+    rules:
+{% if ocp4_workload_performance_monitoring_silence_kvm_alert | default(true) | bool %}
+    # Silenced: AWS instances don't have nested KVM support, emulation is enabled
+    - alert: LowKVMNodesCount
+      expr: "absent(1)"
+      labels:
+        severity: none
+{% endif %}
+{% if ocp4_workload_performance_monitoring_silence_alertmanager_config | default(true) | bool %}
+    # Silenced: Demo/sandbox environments don't configure Alertmanager receivers
+    - alert: AlertmanagerReceiversNotConfigured
+      expr: "absent(1)"
+      labels:
+        severity: none
+{% endif %}
+{% if ocp4_workload_performance_monitoring_silence_pdb_limit | default(true) | bool %}
+    # Silenced: PDBs at limit is expected during normal operation
+    - alert: PodDisruptionBudgetAtLimit
+      expr: "absent(1)"
+      labels:
+        severity: none
+{% endif %}
+{% if ocp4_workload_performance_monitoring_silence_insights | default(true) | bool %}
+    # Silenced: Vendor operator webhook timeouts are not actionable
+    - alert: InsightsRecommendationActive
+      expr: "absent(1)"
+      labels:
+        severity: none
+{% endif %}
+{% if ocp4_workload_performance_monitoring_silence_servicemonitor_rejections | default(true) | bool %}
+    # Silenced: Operator-created ServiceMonitors use deprecated bearerTokenFile
+    # Waiting for operators to update their ServiceMonitor templates
+    - alert: PrometheusOperatorRejectedResources
+      expr: "absent(1)"
+      labels:
+        severity: none
+{% endif %}

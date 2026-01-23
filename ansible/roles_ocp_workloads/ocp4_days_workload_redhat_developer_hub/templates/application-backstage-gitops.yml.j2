@@ -25,6 +25,16 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ ocp4_workload_redhat_developer_hub_backstage_namespace }}
+  # DAYS FIX: Ignore expected drift in runtime-modified fields
+  ignoreDifferences:
+  - group: ""
+    kind: Secret
+    jsonPointers:
+    - /data
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
   syncPolicy:
     automated:
       prune: true
@@ -35,7 +45,7 @@ spec:
     - ApplyOutOfSyncOnly=true
     retry:
       backoff:
-        duration: 10s # the amount to back off. Default unit is seconds, but could also be a duration (e.g. "2m", "1h")
-        factor: 2 # a factor to multiply the base duration after each failed retry
-        maxDuration: 10m # the maximum amount of time allowed for the backoff strategy
+        duration: 10s
+        factor: 2
+        maxDuration: 10m
       limit: 15

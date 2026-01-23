@@ -14,7 +14,19 @@ spec:
     path: charts/hashicorp-vault
     repoURL: {{ ocp4_workload_redhat_developer_hub_bootstrap_agnosticg_repo }}
     targetRevision: HEAD
+  # DAYS FIX: Ignore expected drift in runtime-modified fields
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
+  - group: ""
+    kind: Secret
+    jsonPointers:
+    - /data
   syncPolicy:
-    automated: {}
+    automated:
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true

@@ -31,6 +31,10 @@
 - name: Config User workload Monitoring
   ansible.builtin.include_tasks: enable_userworkload_monitoring.yml
 
+- name: Silence expected alerts for demo environments
+  ansible.builtin.include_tasks: silence_expected_alerts.yml
+  when: ocp4_workload_performance_monitoring_silence_expected_alerts | default(true) | bool
+
 - name: Config Users Namespaces
   ansible.builtin.include_tasks: config_users.yml
 

@@ -1,0 +1,8 @@
+---
+# DAYS FIX: Silence alerts that are expected in demo/sandbox environments
+# These fire due to AWS infrastructure constraints or demo configs, not actual issues
+
+- name: Create PrometheusRule to silence expected alerts
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'silence-expected-alerts.yaml.j2') }}"
