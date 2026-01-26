@@ -1,0 +1,42 @@
+---
+become_override: false
+ocp_username: kubeadmin
+silent: false
+
+_infra_node_replicas: 3
+_infra_node_instance_type: m5a.4xlarge
+
+# Note: This role now works with Showroom instead of Homeroom
+# It gathers cluster metadata and grants cluster-admin permissions
+
+# -------------------------------------------------------------------
+# LVMS Deployment (optional - set workshop_deploy_lvms: true to enable)
+# -------------------------------------------------------------------
+workshop_deploy_lvms: false
+
+# LVMS operator settings
+workshop_lvms_channel: stable-4.20
+workshop_lvms_namespace: openshift-storage
+
+# Catalog snapshot settings (optional)
+workshop_lvms_use_catalog_snapshot: false
+workshop_lvms_catalogsource_name: redhat-operators-snapshot-lvms
+workshop_lvms_catalog_snapshot_image: quay.io/gpte-devops-automation/olm_snapshot_redhat_catalog
+workshop_lvms_catalog_snapshot_image_tag: v4.20_2026_01_12
+
+# LVMCluster configuration
+workshop_lvms_vg_name: vg1
+
+# Device paths - leave empty to use auto-discovery
+workshop_lvms_paths: []
+
+# Optional paths - devices that may or may not exist (handles AWS NVMe ordering)
+workshop_lvms_optional_paths:
+  - /dev/nvme0n1
+  - /dev/nvme1n1
+  - /dev/nvme2n1
+  - /dev/nvme3n1
+  - /dev/nvme4n1
+
+# Force wipe - required when using optionalPaths to handle pre-existing signatures
+workshop_lvms_force_wipe: true

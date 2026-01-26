@@ -1,0 +1,1015 @@
+---
+# vim: set ft=ansible
+
+# Showroom Cluster Admin Setup (adapted from Homeroom version)
+# Keeps all cluster metadata gathering, swaps deployment for Showroom
+
+# ==============================================================================
+# COMPREHENSIVE DEBUG SECTION - Captures full cluster state for troubleshooting
+# ==============================================================================
+
+- name: "DEBUG === CLUSTER OVERVIEW ==="
+  debug:
+    msg: "Gathering comprehensive cluster diagnostics..."
+
+- name: DEBUG - Cluster version and status
+  shell: |
+    echo "=== CLUSTER VERSION ==="
+    oc get clusterversion
+    echo ""
+    echo "=== CLUSTER OPERATORS STATUS ==="
+    oc get co | grep -E "NAME|False|Unknown" || oc get co
+  register: debug_cluster_version
+
+- name: Display cluster version
+  debug:
+    msg: "{{ debug_cluster_version.stdout_lines }}"
+
+- name: DEBUG - Node status and instance types
+  shell: |
+    echo "=== ALL NODES ==="
+    oc get nodes -o wide
+    echo ""
+    echo "=== NODE DETAILS (instance types, zones) ==="
+    oc get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,INSTANCE:.metadata.labels.node\\.kubernetes\\.io/instance-type,ZONE:.metadata.labels.topology\\.kubernetes\\.io/zone,ROLES:.metadata.labels.node-role\\.kubernetes\\.io/worker
+  register: debug_nodes
+
+- name: Display node status
+  debug:
+    msg: "{{ debug_nodes.stdout_lines }}"
+
+- name: DEBUG - Storage classes available
+  shell: |
+    echo "=== STORAGE CLASSES ==="
+    oc get sc
+    echo ""
+    echo "=== DEFAULT STORAGE CLASS ==="
+    oc get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+    echo ""
+  register: debug_storage_classes
+
+- name: Display storage classes
+  debug:
+    msg: "{{ debug_storage_classes.stdout_lines }}"
+
+- name: DEBUG - All installed operators
+  shell: |
+    echo "=== INSTALLED CSVs (Operators) ==="
+    oc get csv -A --no-headers | grep -v Succeeded || echo "All operators Succeeded"
+    echo ""
+    echo "=== ALL CSVs ==="
+    oc get csv -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase | head -50
+  register: debug_operators
+
+- name: Display operators
+  debug:
+    msg: "{{ debug_operators.stdout_lines }}"
+
+- name: DEBUG - ODF/OpenShift Data Foundation status
+  shell: |
+    echo "=== ODF NAMESPACE ==="
+    oc get all -n openshift-storage 2>/dev/null | head -40 || echo "openshift-storage namespace not found"
+    echo ""
+    echo "=== STORAGE CLUSTER STATUS ==="
+    oc get storagecluster -n openshift-storage -o wide 2>/dev/null || echo "No StorageCluster found"
+    echo ""
+    echo "=== CEPH CLUSTER STATUS ==="
+    oc get cephcluster -n openshift-storage -o wide 2>/dev/null || echo "No CephCluster found"
+    echo ""
+    echo "=== ODF CSVs ==="
+    oc get csv -n openshift-storage 2>/dev/null || echo "No CSVs in openshift-storage"
+  register: debug_odf
+
+- name: Display ODF status
+  debug:
+    msg: "{{ debug_odf.stdout_lines }}"
+
+- name: DEBUG - OpenShift Virtualization (KubeVirt) status
+  shell: |
+    echo "=== CNV NAMESPACE ==="
+    oc get all -n openshift-cnv 2>/dev/null | head -30 || echo "openshift-cnv namespace not found"
+    echo ""
+    echo "=== HYPERCONVERGED STATUS ==="
+    oc get hyperconverged -n openshift-cnv -o wide 2>/dev/null || echo "No HyperConverged found"
+    echo ""
+    echo "=== KUBEVIRT STATUS ==="
+    oc get kubevirt -n openshift-cnv -o wide 2>/dev/null || echo "No KubeVirt found"
+    echo ""
+    echo "=== CNV CSVs ==="
+    oc get csv -n openshift-cnv 2>/dev/null || echo "No CSVs in openshift-cnv"
+  register: debug_cnv
+
+- name: Display CNV status
+  debug:
+    msg: "{{ debug_cnv.stdout_lines }}"
+
+- name: DEBUG - ACM/Multicluster Engine status
+  shell: |
+    echo "=== ACM NAMESPACE ==="
+    oc get all -n open-cluster-management 2>/dev/null | head -30 || echo "open-cluster-management namespace not found"
+    echo ""
+    echo "=== MULTICLUSTERHUB STATUS ==="
+    oc get multiclusterhub -A -o wide 2>/dev/null || echo "No MultiClusterHub found"
+    echo ""
+    echo "=== MULTICLUSTER ENGINE STATUS ==="
+    oc get multiclusterengine -A -o wide 2>/dev/null || echo "No MultiClusterEngine found"
+    echo ""
+    echo "=== MANAGED CLUSTERS ==="
+    oc get managedcluster -A 2>/dev/null || echo "No ManagedClusters found"
+    echo ""
+    echo "=== ACM CSVs ==="
+    oc get csv -n open-cluster-management 2>/dev/null | head -20 || echo "No CSVs in open-cluster-management"
+  register: debug_acm
+
+- name: Display ACM status
+  debug:
+    msg: "{{ debug_acm.stdout_lines }}"
+
+- name: DEBUG - MetalLB status
+  shell: |
+    echo "=== METALLB NAMESPACE ==="
+    oc get all -n metallb-system 2>/dev/null | head -20 || echo "metallb-system namespace not found"
+    echo ""
+    echo "=== METALLB CR ==="
+    oc get metallb -A -o wide 2>/dev/null || echo "No MetalLB CR found"
+    echo ""
+    echo "=== IP ADDRESS POOLS ==="
+    oc get ipaddresspool -A 2>/dev/null || echo "No IPAddressPools found"
+    echo ""
+    echo "=== L2 ADVERTISEMENTS ==="
+    oc get l2advertisement -A 2>/dev/null || echo "No L2Advertisements found"
+  register: debug_metallb
+
+- name: Display MetalLB status
+  debug:
+    msg: "{{ debug_metallb.stdout_lines }}"
+
+- name: DEBUG - HCP/Hypershift readiness
+  shell: |
+    echo "=== HCP CLI DOWNLOAD ==="
+    oc get deployment hcp-cli-download -n multicluster-engine 2>/dev/null || echo "hcp-cli-download not found"
+    echo ""
+    echo "=== HOSTED CLUSTERS ==="
+    oc get hostedcluster -A 2>/dev/null || echo "No HostedClusters found (CRD may not exist yet)"
+    echo ""
+    echo "=== CLUSTER IMAGE SETS ==="
+    oc get clusterimageset 2>/dev/null | head -10 || echo "No ClusterImageSets found"
+    echo ""
+    echo "=== INGRESS CONTROLLER WILDCARD POLICY ==="
+    oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.routeAdmission.wildcardPolicy}' 2>/dev/null || echo "Not set"
+    echo ""
+  register: debug_hcp
+
+- name: Display HCP readiness
+  debug:
+    msg: "{{ debug_hcp.stdout_lines }}"
+
+- name: DEBUG - Block devices on first worker (for storage debugging)
+  shell: |
+    FIRST_WORKER=$(oc get nodes -l node-role.kubernetes.io/worker= -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -n "$FIRST_WORKER" ]; then
+      echo "=== WORKER: $FIRST_WORKER ==="
+      echo ""
+      echo "=== BLOCK DEVICES ==="
+      oc debug node/$FIRST_WORKER -- chroot /host lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>/dev/null || echo "Failed to get block devices"
+      echo ""
+      echo "=== INSTANCE TYPE ==="
+      oc debug node/$FIRST_WORKER -- chroot /host curl -s http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo "Failed to get instance type"
+    else
+      echo "No worker nodes found"
+    fi
+  register: debug_block_devices
+
+- name: Display block devices
+  debug:
+    msg: "{{ debug_block_devices.stdout_lines }}"
+
+- name: DEBUG - Pending/Failed pods across cluster
+  shell: |
+    echo "=== PODS NOT RUNNING (excluding Completed) ==="
+    oc get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | head -30 || echo "All pods running"
+    echo ""
+    echo "=== RECENT EVENTS (warnings/errors) ==="
+    oc get events -A --field-selector type!=Normal --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No warning events"
+  register: debug_pods
+
+- name: Display pod issues
+  debug:
+    msg: "{{ debug_pods.stdout_lines }}"
+
+- name: DEBUG - PVCs and PVs status
+  shell: |
+    echo "=== PVCS (non-Bound) ==="
+    oc get pvc -A --field-selector=status.phase!=Bound 2>/dev/null | head -20 || echo "All PVCs bound"
+    echo ""
+    echo "=== PV SUMMARY ==="
+    oc get pv 2>/dev/null | head -20 || echo "No PVs found"
+  register: debug_pvcs
+
+- name: Display PVC status
+  debug:
+    msg: "{{ debug_pvcs.stdout_lines }}"
+
+- name: DEBUG - All Subscriptions (detect conflicts)
+  shell: |
+    echo "=== ALL SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,PACKAGE:.spec.name,CHANNEL:.spec.channel,SOURCE:.spec.source,STATE:.status.state 2>/dev/null || echo "No subscriptions found"
+    echo ""
+    echo "=== SUBSCRIPTIONS WITH ISSUES ==="
+    oc get subscriptions.operators.coreos.com -A -o json 2>/dev/null | jq -r '.items[] | select(.status.conditions[]? | select(.type=="ResolutionFailed" and .status=="True")) | "\(.metadata.namespace)/\(.metadata.name): \(.status.conditions[] | select(.type=="ResolutionFailed") | .message)"' 2>/dev/null | head -10 || echo "No subscription issues found"
+  register: debug_subscriptions
+
+- name: Display subscriptions
+  debug:
+    msg: "{{ debug_subscriptions.stdout_lines }}"
+
+- name: DEBUG - All CatalogSources
+  shell: |
+    echo "=== CATALOG SOURCES ==="
+    oc get catalogsource -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TYPE:.spec.sourceType,STATUS:.status.connectionState.lastObservedState 2>/dev/null || echo "No catalog sources found"
+    echo ""
+    echo "=== UNHEALTHY CATALOG SOURCES ==="
+    oc get catalogsource -A -o json 2>/dev/null | jq -r '.items[] | select(.status.connectionState.lastObservedState != "READY") | "\(.metadata.namespace)/\(.metadata.name): \(.status.connectionState.lastObservedState // "UNKNOWN")"' 2>/dev/null || echo "All catalog sources healthy"
+  register: debug_catalogsources
+
+- name: Display catalog sources
+  debug:
+    msg: "{{ debug_catalogsources.stdout_lines }}"
+
+- name: DEBUG - Pipelines/Tekton status
+  shell: |
+    echo "=== PIPELINES SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i pipeline || echo "No Pipelines subscriptions"
+    echo ""
+    echo "=== PIPELINES CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i pipeline || echo "No Pipelines CSVs"
+    echo ""
+    echo "=== TEKTON CONFIG ==="
+    oc get tektonconfig -A 2>/dev/null || echo "No TektonConfig found"
+    echo ""
+    echo "=== TEKTON PIPELINES ==="
+    oc get tektonpipeline -A 2>/dev/null || echo "No TektonPipeline found"
+  register: debug_pipelines
+
+- name: Display Pipelines status
+  debug:
+    msg: "{{ debug_pipelines.stdout_lines }}"
+
+- name: DEBUG - GitOps/ArgoCD status
+  shell: |
+    echo "=== GITOPS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i gitops || echo "No GitOps subscriptions"
+    echo ""
+    echo "=== GITOPS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i gitops || echo "No GitOps CSVs"
+    echo ""
+    echo "=== ARGOCD INSTANCES ==="
+    oc get argocd -A 2>/dev/null || echo "No ArgoCD instances"
+    echo ""
+    echo "=== GITOPS NAMESPACE ==="
+    oc get all -n openshift-gitops 2>/dev/null | head -15 || echo "openshift-gitops namespace not found"
+  register: debug_gitops
+
+- name: Display GitOps status
+  debug:
+    msg: "{{ debug_gitops.stdout_lines }}"
+
+- name: DEBUG - Serverless/Knative status
+  shell: |
+    echo "=== SERVERLESS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i serverless || echo "No Serverless subscriptions"
+    echo ""
+    echo "=== SERVERLESS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i serverless || echo "No Serverless CSVs"
+    echo ""
+    echo "=== KNATIVE SERVING ==="
+    oc get knativeserving -A 2>/dev/null || echo "No KnativeServing found"
+    echo ""
+    echo "=== KNATIVE EVENTING ==="
+    oc get knativeeventing -A 2>/dev/null || echo "No KnativeEventing found"
+  register: debug_serverless
+
+- name: Display Serverless status
+  debug:
+    msg: "{{ debug_serverless.stdout_lines }}"
+
+- name: DEBUG - Developer Hub/Backstage status
+  shell: |
+    echo "=== BACKSTAGE NAMESPACE ==="
+    oc get all -n backstage 2>/dev/null | head -20 || echo "backstage namespace not found"
+    echo ""
+    echo "=== JANUS-ARGOCD NAMESPACE ==="
+    oc get all -n janus-argocd 2>/dev/null | head -15 || echo "janus-argocd namespace not found"
+    echo ""
+    echo "=== RHDH PODS ==="
+    oc get pods -A 2>/dev/null | grep -i "backstage\|rhdh\|developer-hub" || echo "No RHDH pods found"
+  register: debug_rhdh
+
+- name: Display RHDH status
+  debug:
+    msg: "{{ debug_rhdh.stdout_lines }}"
+
+- name: DEBUG - RHACS/Stackrox status
+  shell: |
+    echo "=== RHACS SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i rhacs || echo "No RHACS subscriptions"
+    echo ""
+    echo "=== RHACS CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i rhacs || echo "No RHACS CSVs"
+    echo ""
+    echo "=== CENTRAL INSTANCE ==="
+    oc get central -A 2>/dev/null || echo "No Central instance found"
+    echo ""
+    echo "=== SECURED CLUSTERS ==="
+    oc get securedcluster -A 2>/dev/null || echo "No SecuredCluster found"
+  register: debug_rhacs
+
+- name: Display RHACS status
+  debug:
+    msg: "{{ debug_rhacs.stdout_lines }}"
+
+- name: DEBUG - OADP/Velero status
+  shell: |
+    echo "=== OADP SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i oadp || echo "No OADP subscriptions"
+    echo ""
+    echo "=== OADP CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i oadp || echo "No OADP CSVs"
+    echo ""
+    echo "=== DATA PROTECTION APPLICATION ==="
+    oc get dataprotectionapplication -A 2>/dev/null || echo "No DPA found"
+    echo ""
+    echo "=== BACKUP STORAGE LOCATIONS ==="
+    oc get backupstoragelocation -A 2>/dev/null || echo "No BSL found"
+  register: debug_oadp
+
+- name: Display OADP status
+  debug:
+    msg: "{{ debug_oadp.stdout_lines }}"
+
+- name: DEBUG - Showroom status
+  shell: |
+    echo "=== SHOWROOM NAMESPACES ==="
+    oc get ns 2>/dev/null | grep -i showroom || echo "No Showroom namespaces"
+    echo ""
+    echo "=== SHOWROOM PODS ==="
+    oc get pods -A 2>/dev/null | grep -i showroom || echo "No Showroom pods"
+    echo ""
+    echo "=== SHOWROOM ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i showroom || echo "No Showroom routes"
+  register: debug_showroom
+
+- name: Display Showroom status
+  debug:
+    msg: "{{ debug_showroom.stdout_lines }}"
+
+- name: DEBUG - InstallPlans (detect stuck installs)
+  shell: |
+    echo "=== PENDING INSTALLPLANS ==="
+    oc get installplan -A 2>/dev/null | grep -v "Complete" | head -20 || echo "All InstallPlans complete"
+    echo ""
+    echo "=== RECENT INSTALLPLANS ==="
+    oc get installplan -A --sort-by='.metadata.creationTimestamp' 2>/dev/null | tail -15 || echo "No InstallPlans"
+  register: debug_installplans
+
+- name: Display InstallPlans
+  debug:
+    msg: "{{ debug_installplans.stdout_lines }}"
+
+- name: DEBUG - Resource usage summary
+  shell: |
+    echo "=== NODE RESOURCE USAGE ==="
+    oc adm top nodes 2>/dev/null || echo "Metrics not available"
+    echo ""
+    echo "=== NAMESPACE COUNT ==="
+    oc get ns --no-headers 2>/dev/null | wc -l || echo "Unknown"
+    echo ""
+    echo "=== TOTAL POD COUNT ==="
+    oc get pods -A --no-headers 2>/dev/null | wc -l || echo "Unknown"
+  register: debug_resources
+
+- name: Display resource usage
+  debug:
+    msg: "{{ debug_resources.stdout_lines }}"
+
+- name: DEBUG - Cert-manager status (first operator in chain)
+  shell: |
+    echo "=== CERT-MANAGER SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i cert-manager || echo "No cert-manager subscriptions"
+    echo ""
+    echo "=== CERT-MANAGER CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i cert-manager || echo "No cert-manager CSVs"
+    echo ""
+    echo "=== CERT-MANAGER NAMESPACE ==="
+    oc get all -n cert-manager 2>/dev/null | head -15 || echo "cert-manager namespace not found"
+    echo ""
+    echo "=== CERT-MANAGER PODS ==="
+    oc get pods -n cert-manager 2>/dev/null || echo "No pods in cert-manager namespace"
+    echo ""
+    echo "=== CLUSTER ISSUERS ==="
+    oc get clusterissuer 2>/dev/null || echo "No ClusterIssuers found"
+    echo ""
+    echo "=== CLUSTER ISSUER DETAILS ==="
+    oc get clusterissuer -o yaml 2>/dev/null | grep -A20 "status:" | head -30 || echo "No ClusterIssuer status"
+  register: debug_certmanager
+
+- name: Display cert-manager status
+  debug:
+    msg: "{{ debug_certmanager.stdout_lines }}"
+
+- name: DEBUG - Certificate issuance status (for troubleshooting Let's Encrypt)
+  shell: |
+    echo "=== ALL CERTIFICATES ==="
+    oc get certificate -A -o wide 2>/dev/null || echo "No Certificates found"
+    echo ""
+    echo "=== CERTIFICATE STATUS DETAILS ==="
+    for cert in $(oc get certificate -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+      ns=$(echo $cert | cut -d'/' -f1)
+      name=$(echo $cert | cut -d'/' -f2)
+      echo "--- Certificate: $ns/$name ---"
+      oc get certificate $name -n $ns -o jsonpath='{.status.conditions[*]}' 2>/dev/null | jq -r '.' 2>/dev/null || echo "No conditions"
+    done
+    echo ""
+    echo "=== CERTIFICATE REQUESTS ==="
+    oc get certificaterequest -A 2>/dev/null || echo "No CertificateRequests found"
+    echo ""
+    echo "=== CERTIFICATE REQUEST STATUS ==="
+    oc get certificaterequest -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.conditions[0].reason} - {.status.conditions[0].message}{"\n"}{end}' 2>/dev/null | head -20 || echo "No status"
+    echo ""
+    echo "=== ACME ORDERS ==="
+    oc get order -A 2>/dev/null || echo "No Orders found"
+    echo ""
+    echo "=== ORDER STATUS ==="
+    oc get order -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.state} - {.status.reason}{"\n"}{end}' 2>/dev/null | head -20 || echo "No order status"
+    echo ""
+    echo "=== ACME CHALLENGES ==="
+    oc get challenge -A 2>/dev/null || echo "No Challenges found"
+    echo ""
+    echo "=== CHALLENGE STATUS ==="
+    oc get challenge -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}: {.status.state} - {.status.reason}{"\n"}{end}' 2>/dev/null | head -20 || echo "No challenge status"
+    echo ""
+    echo "=== CERT-MANAGER CONTROLLER LOGS (last 50 lines) ==="
+    oc logs -n cert-manager -l app.kubernetes.io/component=controller --tail=50 2>/dev/null || echo "No controller logs"
+  register: debug_certificates
+
+- name: Display certificate issuance status
+  debug:
+    msg: "{{ debug_certificates.stdout_lines }}"
+
+- name: DEBUG - OperatorGroups (detect conflicts)
+  shell: |
+    echo "=== ALL OPERATORGROUPS ==="
+    oc get operatorgroup -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,TARGETS:.spec.targetNamespaces 2>/dev/null || echo "No OperatorGroups found"
+    echo ""
+    echo "=== NAMESPACES WITH MULTIPLE OPERATORGROUPS (conflict!) ==="
+    oc get operatorgroup -A -o json 2>/dev/null | jq -r '[.items[] | {ns: .metadata.namespace}] | group_by(.ns) | .[] | select(length > 1) | .[0].ns' 2>/dev/null || echo "No conflicts"
+  register: debug_operatorgroups
+
+- name: Display OperatorGroups
+  debug:
+    msg: "{{ debug_operatorgroups.stdout_lines }}"
+
+- name: DEBUG - Minio status (S3 for RHDH)
+  shell: |
+    echo "=== MINIO NAMESPACE ==="
+    oc get all -n ic-shared-minio 2>/dev/null | head -15 || echo "ic-shared-minio namespace not found"
+    echo ""
+    echo "=== MINIO PODS ==="
+    oc get pods -A 2>/dev/null | grep -i minio || echo "No Minio pods"
+    echo ""
+    echo "=== MINIO ROUTES ==="
+    oc get routes -n ic-shared-minio 2>/dev/null || echo "No Minio routes"
+  register: debug_minio
+
+- name: Display Minio status
+  debug:
+    msg: "{{ debug_minio.stdout_lines }}"
+
+- name: DEBUG - Web Terminal status
+  shell: |
+    echo "=== WEB TERMINAL SUBSCRIPTIONS ==="
+    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i web-terminal || echo "No Web Terminal subscriptions"
+    echo ""
+    echo "=== WEB TERMINAL CSVs ==="
+    oc get csv -A 2>/dev/null | grep -i web-terminal || echo "No Web Terminal CSVs"
+    echo ""
+    echo "=== WEB TERMINAL NAMESPACE ==="
+    oc get all -n openshift-terminal 2>/dev/null | head -10 || echo "openshift-terminal namespace not found"
+  register: debug_webterminal
+
+- name: Display Web Terminal status
+  debug:
+    msg: "{{ debug_webterminal.stdout_lines }}"
+
+- name: DEBUG - GitLab status (for RHDH)
+  shell: |
+    echo "=== GITLAB PODS ==="
+    oc get pods -A 2>/dev/null | grep -i gitlab || echo "No GitLab pods"
+    echo ""
+    echo "=== GITLAB ROUTES ==="
+    oc get routes -A 2>/dev/null | grep -i gitlab || echo "No GitLab routes"
+  register: debug_gitlab
+
+- name: Display GitLab status
+  debug:
+    msg: "{{ debug_gitlab.stdout_lines }}"
+
+- name: "DEBUG === END CLUSTER OVERVIEW ==="
+  debug:
+    msg: "Cluster diagnostics complete. Proceeding with workload setup..."
+
+# ==============================================================================
+# LVMS Deployment Section (optional - enabled via workshop_deploy_lvms: true)
+# Deploys LVMS operator with optionalPaths for AWS NVMe device handling
+# ==============================================================================
+
+- name: Create openshift-storage namespace for LVMS
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ workshop_lvms_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create CatalogSource for LVMS (snapshot)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: CatalogSource
+      metadata:
+        name: "{{ workshop_lvms_catalogsource_name }}"
+        namespace: openshift-marketplace
+      spec:
+        sourceType: grpc
+        image: "{{ workshop_lvms_catalog_snapshot_image }}:{{ workshop_lvms_catalog_snapshot_image_tag }}"
+        displayName: LVMS Catalog Snapshot
+  when:
+    - workshop_deploy_lvms | default(false) | bool
+    - workshop_lvms_use_catalog_snapshot | default(false) | bool
+
+- name: Check if OperatorGroup already exists in namespace
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1
+    kind: OperatorGroup
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: existing_operatorgroup
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create OperatorGroup for LVMS (only if none exists)
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1
+      kind: OperatorGroup
+      metadata:
+        name: lvms-operatorgroup
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        targetNamespaces:
+          - "{{ workshop_lvms_namespace }}"
+  when:
+    - workshop_deploy_lvms | default(false) | bool
+    - existing_operatorgroup.resources | default([]) | length == 0
+
+- name: Create LVMS Subscription
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: lvms-operator
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        channel: "{{ workshop_lvms_channel }}"
+        installPlanApproval: Automatic
+        name: lvms-operator
+        source: "{{ workshop_lvms_use_catalog_snapshot | default(false) | ternary(workshop_lvms_catalogsource_name, 'redhat-operators') }}"
+        sourceNamespace: openshift-marketplace
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMS Subscription to have installedCSV
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: lvms-operator
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: lvms_subscription
+  until:
+    - lvms_subscription.resources | length > 0
+    - lvms_subscription.resources[0].status is defined
+    - lvms_subscription.resources[0].status.installedCSV is defined
+    - lvms_subscription.resources[0].status.installedCSV | length > 0
+  retries: 60
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMS CSV to be Succeeded
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ lvms_subscription.resources[0].status.installedCSV }}"
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: lvms_csv
+  until:
+    - lvms_csv.resources | length > 0
+    - lvms_csv.resources[0].status is defined
+    - lvms_csv.resources[0].status.phase is defined
+    - lvms_csv.resources[0].status.phase == "Succeeded"
+  retries: 60
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Create LVMCluster with optionalPaths
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: lvm.topolvm.io/v1alpha1
+      kind: LVMCluster
+      metadata:
+        name: lvmcluster
+        namespace: "{{ workshop_lvms_namespace }}"
+      spec:
+        storage:
+          deviceClasses:
+            - name: "{{ workshop_lvms_vg_name }}"
+              default: true
+              deviceSelector: "{{ lookup('template', 'lvms_device_selector.j2') | from_yaml }}"
+              thinPoolConfig:
+                name: thin-pool-1
+                sizePercent: 90
+                overprovisionRatio: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Wait for LVMCluster to be ready
+  kubernetes.core.k8s_info:
+    api_version: lvm.topolvm.io/v1alpha1
+    kind: LVMCluster
+    name: lvmcluster
+    namespace: "{{ workshop_lvms_namespace }}"
+  register: lvmcluster_status
+  until:
+    - lvmcluster_status.resources | length > 0
+    - lvmcluster_status.resources[0].status is defined
+    - lvmcluster_status.resources[0].status.state is defined
+    - lvmcluster_status.resources[0].status.state == "Ready"
+  retries: 60
+  delay: 10
+  when: workshop_deploy_lvms | default(false) | bool
+
+- name: Display LVMS deployment status
+  debug:
+    msg: "LVMS deployed successfully with LVMCluster in Ready state"
+  when: workshop_deploy_lvms | default(false) | bool
+
+# ==============================================================================
+# End LVMS Deployment Section
+# ==============================================================================
+
+- name: create the variable template file
+  template:
+    src: files/workshop-settings.j2
+    dest: /tmp/workshop-settings.sh
+
+# Wait for Showroom to be deployed (by ocp4_workload_showroom)
+# Using namespace-based lookup instead of label selectors (more reliable)
+- name: Set Showroom namespace
+  set_fact:
+    showroom_namespace: "showroom-{{ guid }}"
+
+- name: Wait for Showroom deployment to exist
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+  register: showroom_deployment_r
+  until: showroom_deployment_r.resources | length > 0
+  retries: 10
+  delay: 10
+
+- name: Read workshop settings file from bastion
+  slurp:
+    src: /tmp/workshop-settings.sh
+  register: workshop_settings_content
+
+- name: Create ConfigMap with workshop environment variables
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: workshop-env
+        namespace: "{{ showroom_namespace }}"
+        labels:
+          app: showroom
+      data:
+        workshop-settings.sh: "{{ workshop_settings_content.content | b64decode }}"
+
+- name: Parse workshop settings into individual variables for ConfigMap
+  set_fact:
+    workshop_vars: >-
+      {%- set result = {} -%}
+      {%- for key, value in workshop_settings_content.content | b64decode | regex_findall('([A-Z_]+)=(.*)') -%}
+      {%- set _ = result.update({key: value}) -%}
+      {%- endfor -%}
+      {{ result }}
+
+- name: Create ConfigMap with individual environment variables
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: workshop-vars
+        namespace: "{{ showroom_namespace }}"
+        labels:
+          app: showroom
+      data: "{{ workshop_vars }}"
+
+- name: Patch Showroom deployment to inject workshop environment variables
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type=json -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/0/envFrom",
+        "value": [
+          {
+            "configMapRef": {
+              "name": "workshop-vars"
+            }
+          }
+        ]
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/envFrom",
+        "value": [
+          {
+            "configMapRef": {
+              "name": "workshop-vars"
+            }
+          }
+        ]
+      }
+    ]'
+  register: patch_result
+  failed_when: patch_result.rc != 0 and 'already exists' not in patch_result.stderr
+
+- name: Wait for Showroom deployment to roll out with new environment variables
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_deployment_patched
+  until:
+    - showroom_deployment_patched.resources[0].status.updatedReplicas is defined
+    - showroom_deployment_patched.resources[0].status.updatedReplicas == showroom_deployment_patched.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+
+# ==============================================================================
+# Auto-install CLI tools via .workshop/setup script
+# To disable: set enable_workshop_cli_tools: false in your vars
+# ==============================================================================
+- name: Patch terminal container to mount workshop content for CLI tool installation
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type=json -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/2/volumeMounts/-",
+        "value": {
+          "name": "showroom",
+          "mountPath": "/showroom",
+          "readOnly": true
+        }
+      }
+    ]'
+  register: terminal_mount_result
+  failed_when: terminal_mount_result.rc != 0 and 'already exists' not in terminal_mount_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom deployment to roll out after mounting workshop content
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_deployment_after_mount
+  until:
+    - showroom_deployment_after_mount.resources[0].status.updatedReplicas is defined
+    - showroom_deployment_after_mount.resources[0].status.updatedReplicas == showroom_deployment_after_mount.resources[0].spec.replicas
+    - showroom_deployment_after_mount.resources[0].status.readyReplicas is defined
+    - showroom_deployment_after_mount.resources[0].status.readyReplicas == showroom_deployment_after_mount.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom pod to be fully ready
+  shell: |
+    POD_NAME=$(oc get pods -n {{ showroom_namespace }} -o jsonpath='{.items[0].metadata.name}')
+    oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Add Antora cache volume to Showroom deployment
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type='json' -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/volumes/-",
+        "value": {
+          "name": "antora-cache",
+          "emptyDir": {}
+        }
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/volumeMounts/-",
+        "value": {
+          "name": "antora-cache",
+          "mountPath": "/opt/app-root/src/.cache"
+        }
+      }
+    ]'
+  register: antora_cache_result
+  failed_when: antora_cache_result.rc != 0 and 'already exists' not in antora_cache_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Add npm cache volume to Showroom deployment
+  shell: |
+    oc patch deployment showroom -n {{ showroom_namespace }} --type='json' -p='[
+      {
+        "op": "add",
+        "path": "/spec/template/spec/volumes/-",
+        "value": {
+          "name": "npm-cache",
+          "emptyDir": {}
+        }
+      },
+      {
+        "op": "add",
+        "path": "/spec/template/spec/containers/1/volumeMounts/-",
+        "value": {
+          "name": "npm-cache",
+          "mountPath": "/opt/app-root/src/.npm"
+        }
+      }
+    ]'
+  register: npm_cache_result
+  failed_when: npm_cache_result.rc != 0 and 'already exists' not in npm_cache_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for Showroom to roll out after cache volumes added
+  kubernetes.core.k8s_info:
+    kind: Deployment
+    namespace: "{{ showroom_namespace }}"
+    name: showroom
+  register: showroom_after_cache
+  until:
+    - showroom_after_cache.resources[0].status.updatedReplicas is defined
+    - showroom_after_cache.resources[0].status.updatedReplicas == showroom_after_cache.resources[0].spec.replicas
+    - showroom_after_cache.resources[0].status.readyReplicas is defined
+    - showroom_after_cache.resources[0].status.readyReplicas == showroom_after_cache.resources[0].spec.replicas
+  retries: 30
+  delay: 10
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Wait for new pod to be ready after cache volumes
+  shell: |
+    sleep 10
+    POD_NAME=$(oc get pods -n {{ showroom_namespace }} -o jsonpath='{.items[0].metadata.name}')
+    oc wait --for=condition=ready pod/$POD_NAME -n {{ showroom_namespace }} --timeout=300s
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Inject workshop environment variables into antora.yml
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    if [ -x /showroom/repo/.workshop/inject-env-vars.sh ]; then
+      /showroom/repo/.workshop/inject-env-vars.sh
+    else
+      echo "ERROR: injection script not found or not executable"
+      exit 1
+    fi'
+  register: inject_vars_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Display variable injection output
+  debug:
+    msg: "{{ inject_vars_result.stdout_lines }}"
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Rebuild Antora site with injected variables
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    cd /showroom/repo && npx antora default-site.yml'
+  register: antora_build_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Display Antora build output
+  debug:
+    msg: "{{ antora_build_result.stdout_lines | default([]) }}"
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Copy built site to served location
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    cp -r /showroom/repo/public/* /showroom/www/'
+  register: copy_site_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Verify workshop variables are rendered
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c content -- bash -c '
+    echo "=== Variable Rendering Verification ==="
+    echo "Environment: $(grep -c "Amazon Web Services" /showroom/www/ocp-admin-storage/main/index.html || echo 0) occurrences"
+    echo "SSH Username: $(grep -c "ssh -l.*bastion\." /showroom/www/ocp-admin-storage/main/installation.html || echo 0) occurrences"'
+  register: verify_result
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Display verification results
+  debug:
+    msg: "{{ verify_result.stdout_lines }}"
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Create bashrc.d directory in terminal container
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- mkdir -p /home/lab-user/.bashrc.d
+  register: bashrc_dir_result
+  failed_when: bashrc_dir_result.rc != 0 and 'File exists' not in bashrc_dir_result.stderr
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Add workshop setup auto-run script to terminal
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- bash -c 'cat > /home/lab-user/.bashrc.d/00-workshop-setup.sh << "EOF"
+    #!/bin/bash
+    # Auto-run .workshop/setup script on first terminal login
+    if [ -x /showroom/repo/.workshop/setup ] && [ ! -f ~/.workshop-setup-complete ]; then
+      echo "Running workshop CLI tools setup..."
+      /showroom/repo/.workshop/setup
+      touch ~/.workshop-setup-complete
+    fi
+    EOF'
+  when: enable_workshop_cli_tools | default(true) | bool
+
+- name: Make workshop setup script executable
+  shell: |
+    oc exec deployment/showroom -n {{ showroom_namespace }} -c terminal -- chmod +x /home/lab-user/.bashrc.d/00-workshop-setup.sh
+  when: enable_workshop_cli_tools | default(true) | bool
+# ==============================================================================
+# End CLI tools auto-install section
+# ==============================================================================
+
+- name: Grant cluster-admin to Showroom serviceaccount
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "showroom-cluster-admin-{{ guid }}"
+        labels:
+          app: showroom
+          guid: "{{ guid }}"
+      subjects:
+      - kind: ServiceAccount
+        name: showroom
+        namespace: "{{ showroom_namespace }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+  register: clusterrolebinding
+
+- name: Fetch Showroom route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: showroom
+    namespace: "{{ showroom_namespace }}"
+  register: Route
+
+- name: Provide workshop information
+  agnosticd_user_info:
+    msg: "{{ item }}"
+  loop:
+  - ""
+  - "Access the workshop at https://{{ Route.resources[0].spec.host }}"
+  - "Workshop has cluster-admin permissions enabled"
+  - "Environment variables available in ConfigMap: workshop-env"
+  - ""
+  - "Cluster Information:"
+  - "  API URL: {{ api_url }}"
+  - "  Console: {{ master_url }}"
+  - "  Kubeadmin Password: {{ kubeadmin_password }}"
+  - ""
+
+# Leave this as the last task in the playbook.
+
+- name: workload tasks complete
+  debug:
+    msg: "Workload Tasks completed successfully."
+  when: not silent | bool
