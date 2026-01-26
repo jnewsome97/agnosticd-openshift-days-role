@@ -1,0 +1,116 @@
+---
+- name: Update Router for Wildcards for HCP Hosted Clusters
+  when: ocp4_days_workload_rhacm_enable_wildcards | bool
+  kubernetes.core.k8s_json_patch:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    namespace: openshift-ingress-operator
+    name: default
+    patch:
+    - op: add
+      path: '/spec/routeAdmission'
+      value:
+        wildcardPolicy: WildcardsAllowed
+
+- name: Install RHACM operator
+  ansible.builtin.include_role:
+    name: install_operator
+  vars:
+    install_operator_action: install
+    install_operator_name: advanced-cluster-management
+    install_operator_namespace: "open-cluster-management"
+    install_operator_channel: "{{ ocp4_days_workload_rhacm_acm_channel }}"
+    install_operator_catalog: redhat-operators
+    install_operator_automatic_install_plan_approval: "{{ ocp4_days_workload_rhacm_automatic_install_plan_approval | default('true') }}"
+    install_operator_starting_csv: "{{ ocp4_days_workload_rhacm_acm_starting_csv | default('') }}"
+    install_operator_catalogsource_setup: "{{ ocp4_days_workload_rhacm_use_catalog_snapshot | default(false) }}"
+    install_operator_catalogsource_name: "{{ ocp4_days_workload_rhacm_catalogsource_name }}"
+    install_operator_catalogsource_namespace: "{{ ocp4_days_workload_rhacm_catalogsource_namespace }}"
+    install_operator_catalogsource_image: "{{ ocp4_days_workload_rhacm_catalog_source_image | default('') }}"
+    install_operator_catalogsource_image_tag: "{{ ocp4_days_workload_rhacm_catalog_source_tag | default('') }}"
+    install_operator_manage_namespaces:
+    - open-cluster-management
+
+- name: Ensure RHACM MultiClusterHub is present
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'multiclusterhub.yaml.j2') }}"
+  retries: 60
+  delay: 10
+  register: r_mhc
+  until: r_mhc is succeeded
+
+- name: Wait until RHACM MultiClusterHub is ready
+  kubernetes.core.k8s_info:
+    api_version: operator.open-cluster-management.io/v1
+    kind: MultiClusterHub
+    name: multiclusterhub
+    namespace: open-cluster-management
+  register: rhacm_multiclusterhub
+  retries: 120
+  delay: 30
+  until:
+  - rhacm_multiclusterhub is defined
+  - rhacm_multiclusterhub.resources is defined
+  - rhacm_multiclusterhub.resources | length > 0
+  - rhacm_multiclusterhub.resources[0].status is defined
+  - rhacm_multiclusterhub.resources[0].status.phase is defined
+  - rhacm_multiclusterhub.resources[0].status.phase == "Running"
+
+# DAYS FIX: Configure persistent storage for RHACM Search to prevent SearchPVCNotPresent alert
+- name: Wait for Search CR to be created by MCH
+  when: ocp4_days_workload_rhacm_search_storage_class | length > 0
+  kubernetes.core.k8s_info:
+    api_version: search.open-cluster-management.io/v1alpha1
+    kind: Search
+    name: search-v2-operator
+    namespace: open-cluster-management
+  register: r_search_cr
+  retries: 30
+  delay: 10
+  until:
+  - r_search_cr.resources is defined
+  - r_search_cr.resources | length > 0
+
+- name: Configure Search persistent storage
+  when: ocp4_days_workload_rhacm_search_storage_class | length > 0
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: search.open-cluster-management.io/v1alpha1
+      kind: Search
+      metadata:
+        name: search-v2-operator
+        namespace: open-cluster-management
+      spec:
+        dbStorage:
+          size: "{{ ocp4_days_workload_rhacm_search_storage_size }}"
+          storageClassName: "{{ ocp4_days_workload_rhacm_search_storage_class }}"
+
+- name: Get Web Console route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: openshift-console
+    name: console
+  register: r_console_route
+
+- name: Get API server URL
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: r_api_url
+
+- name: Save user data
+  agnosticd_user_info:
+    data:
+      web_console_url: "https://{{ r_console_route.resources[0].spec.host }}"
+      api_url: "{{ r_api_url.resources[0].status.apiServerURL }}"
+
+- name: Write out AWS credentials if deployed to EC2 sandbox
+  when:
+  - cloud_provider == 'ec2'
+  - hostvars.localhost.cloudformation_out_final.stack_outputs.StudentUserAccessKey is defined
+  - hostvars.localhost.cloudformation_out_final.stack_outputs.StudentUserSecretAccessKey is defined
+  ansible.builtin.include_tasks: aws_credentials.yml
