@@ -57,36 +57,6 @@
   - rhacm_multiclusterhub.resources[0].status.phase is defined
   - rhacm_multiclusterhub.resources[0].status.phase == "Running"
 
-# DAYS FIX: Configure persistent storage for RHACM Search to prevent SearchPVCNotPresent alert
-- name: Wait for Search CR to be created by MCH
-  when: ocp4_workload_rhacm_search_storage_class | length > 0
-  kubernetes.core.k8s_info:
-    api_version: search.open-cluster-management.io/v1alpha1
-    kind: Search
-    name: search-v2-operator
-    namespace: open-cluster-management
-  register: r_search_cr
-  retries: 30
-  delay: 10
-  until:
-  - r_search_cr.resources is defined
-  - r_search_cr.resources | length > 0
-
-- name: Configure Search persistent storage
-  when: ocp4_workload_rhacm_search_storage_class | length > 0
-  kubernetes.core.k8s:
-    state: present
-    definition:
-      apiVersion: search.open-cluster-management.io/v1alpha1
-      kind: Search
-      metadata:
-        name: search-v2-operator
-        namespace: open-cluster-management
-      spec:
-        dbStorage:
-          size: "{{ ocp4_workload_rhacm_search_storage_size }}"
-          storageClassName: "{{ ocp4_workload_rhacm_search_storage_class }}"
-
 - name: Get Web Console route
   kubernetes.core.k8s_info:
     api_version: route.openshift.io/v1

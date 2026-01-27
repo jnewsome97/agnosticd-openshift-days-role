@@ -1,43 +1,4 @@
 ---
-# ==============================================================================
-# DEBUG SECTION - Added for troubleshooting (TEMPORARY)
-# ==============================================================================
-- name: "DEBUG === RHDH BOOTSTRAP WORKLOAD START ==="
-  debug:
-    msg: |
-      Starting ocp4_workload_redhat_developer_hub_bootstrap deployment
-      This workload sets up: Vault, External Secrets, Quay, ArgoCD (janus)
-      Orchestrator Enabled: {{ ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_enabled | default(false) }}
-      Bootstrap Repo: {{ ocp4_workload_redhat_developer_hub_bootstrap_janus_bootstrap_repo | default('not set') }}
-
-- name: DEBUG - Check RHDH Bootstrap prerequisites
-  shell: |
-    echo "=== ARGOCD INSTANCES ==="
-    oc get argocd -A -o wide 2>/dev/null || echo "No ArgoCD instances"
-    echo ""
-    echo "=== QUAY OPERATOR (pre-check) ==="
-    oc get csv -A 2>/dev/null | grep -i quay || echo "Quay not installed yet"
-    echo ""
-    echo "=== QUAY SUBSCRIPTION (pre-check) ==="
-    oc get subscriptions.operators.coreos.com -A 2>/dev/null | grep -i quay || echo "No Quay subscription"
-    echo ""
-    echo "=== EXTERNAL SECRETS OPERATOR (pre-check) ==="
-    oc get csv -A 2>/dev/null | grep -i external-secrets || echo "Not installed yet"
-    echo ""
-    echo "=== VAULT (pre-check) ==="
-    oc get pods -A 2>/dev/null | grep -i vault | head -5 || echo "No Vault pods"
-    echo ""
-    echo "=== CATALOG SOURCES ==="
-    oc get catalogsource -A -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,STATUS:.status.connectionState.lastObservedState 2>/dev/null || echo "No catalog sources"
-  register: debug_rhdh_bootstrap_prereq
-
-- name: Display RHDH Bootstrap prerequisites
-  debug:
-    msg: "{{ debug_rhdh_bootstrap_prereq.stdout_lines }}"
-# ==============================================================================
-# END DEBUG SECTION
-# ==============================================================================
-
 - name: Setting up workload
   ansible.builtin.debug:
     msg: "Setting up GitLab"
@@ -87,52 +48,6 @@
   when: ocp4_workload_redhat_developer_hub_bootstrap_orchestrator_enabled
   ansible.builtin.include_tasks:
     file: ./setup_orchestrator.yml
-
-# ==============================================================================
-# DEBUG SECTION - End of workload verification (TEMPORARY)
-# ==============================================================================
-- name: "DEBUG === RHDH BOOTSTRAP WORKLOAD COMPLETE ==="
-  shell: |
-    echo "=== JANUS-ARGOCD NAMESPACE ==="
-    oc get all -n janus-argocd 2>/dev/null | head -20 || echo "janus-argocd namespace not found"
-    echo ""
-    echo "=== ARGOCD INSTANCES (after bootstrap) ==="
-    oc get argocd -A -o wide 2>/dev/null || echo "No ArgoCD instances"
-    echo ""
-    echo "=== ARGOCD APPLICATIONS ==="
-    oc get applications.argoproj.io -A 2>/dev/null | head -20 || echo "No ArgoCD applications"
-    echo ""
-    echo "=== VAULT STATUS ==="
-    oc get pods -A 2>/dev/null | grep -i vault || echo "No Vault pods"
-    echo ""
-    echo "=== VAULT HELM RELEASES ==="
-    helm list -A 2>/dev/null | grep -i vault || echo "No Vault helm releases"
-    echo ""
-    echo "=== EXTERNAL SECRETS OPERATOR ==="
-    oc get csv -A 2>/dev/null | grep -i external-secrets || echo "No External Secrets CSV"
-    echo ""
-    echo "=== CLUSTER SECRET STORES ==="
-    oc get clustersecretstore -A 2>/dev/null || echo "No ClusterSecretStores"
-    echo ""
-    echo "=== QUAY OPERATOR ==="
-    oc get csv -A 2>/dev/null | grep -i quay || echo "No Quay CSV"
-    echo ""
-    echo "=== QUAY SUBSCRIPTION STATUS ==="
-    oc get subscriptions.operators.coreos.com -A -o json 2>/dev/null | jq -r '.items[] | select(.spec.name | test("quay"; "i")) | "Namespace: \(.metadata.namespace), Channel: \(.spec.channel), Source: \(.spec.source), State: \(.status.state // "unknown")"' 2>/dev/null || echo "No Quay subscription"
-    echo ""
-    echo "=== QUAY REGISTRY INSTANCES ==="
-    oc get quayregistry -A -o wide 2>/dev/null || echo "No QuayRegistry instances"
-    echo ""
-    echo "=== QUAY PODS ==="
-    oc get pods -A 2>/dev/null | grep -i quay | head -15 || echo "No Quay pods"
-  register: debug_rhdh_bootstrap_complete
-
-- name: Display RHDH Bootstrap completion status
-  debug:
-    msg: "{{ debug_rhdh_bootstrap_complete.stdout_lines }}"
-# ==============================================================================
-# END DEBUG SECTION
-# ==============================================================================
 
 # Leave this as the last task in the playbook.
 # --------------------------------------------

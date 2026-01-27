@@ -15,7 +15,6 @@
 
 - name: Install Sonatype Nexus
   ansible.builtin.include_tasks: install_sonatype_nexus.yml
-  when: ocp4_workload_performance_monitoring_install_nexus | default(true) | bool
 
 - name: Install Kubernetes Image Puller
   ansible.builtin.include_tasks: install_image_puller.yml
